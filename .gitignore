@@ -1,0 +1,18 @@
+# Go build output
+/dist/
+*.test
+
+# Node / Vite
+web/node_modules/
+web/dist/*
+!web/dist/index.html
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# Runtime working directory (if created in-tree)
+mongosync-ui-data/
