@@ -50,6 +50,16 @@ export function MonitorView({
   const progress: Progress | undefined = resp?.progress
   const state = (progress?.state || '').toUpperCase()
 
+  // Track how long mongosync has been INITIALIZING so a stuck connection can
+  // be flagged — connection failures only appear in the log, not in progress.
+  const [initSince, setInitSince] = useState<number | null>(null)
+  useEffect(() => {
+    setInitSince((prev) =>
+      state === 'INITIALIZING' ? (prev ?? Date.now()) : null,
+    )
+  }, [state])
+  const initStuck = initSince !== null && Date.now() - initSince > 30000
+
   async function runAction(
     name: string,
     fn: () => Promise<unknown>,
@@ -114,7 +124,16 @@ export function MonitorView({
       </div>
 
       <div className="stack" style={{ marginTop: 24 }}>
-        {pollError && (
+        {session.processExited && (
+          <Banner variant="danger">
+            <b>mongosync has stopped.</b>{' '}
+            {session.exitReason ||
+              'The local mongosync process exited unexpectedly.'}{' '}
+            Review the logs below, then use “Stop &amp; shut down” to return to
+            setup.
+          </Banner>
+        )}
+        {pollError && !session.processExited && (
           <Banner variant="danger">
             Cannot reach mongosync: {pollError}
           </Banner>
@@ -124,6 +143,14 @@ export function MonitorView({
           <Banner variant="warning">
             mongosync: {resp.error}
             {resp.errorDescription ? ` — ${resp.errorDescription}` : ''}
+          </Banner>
+        )}
+
+        {state === 'INITIALIZING' && (
+          <Banner variant={initStuck ? 'warning' : 'info'}>
+            {initStuck
+              ? 'mongosync has been initializing for over 30 seconds. It is most likely unable to reach the source or destination cluster — confirm both connection strings point to reachable replica sets, then check the logs below.'
+              : 'mongosync is starting up and connecting to the source and destination clusters…'}
           </Banner>
         )}
 
@@ -161,7 +188,11 @@ export function MonitorView({
           </Card>
         )}
 
-        {session.mode === 'local' && <LogsCard />}
+        {session.mode === 'local' && (
+          <LogsCard
+            defaultOpen={state === 'INITIALIZING' || !!session.processExited}
+          />
+        )}
       </div>
     </div>
   )
@@ -234,6 +265,12 @@ function ActionBar({
       {isIdle && !showStart && (
         <p className="card-desc" style={{ marginTop: 12, marginBottom: 0 }}>
           mongosync is idle. Configure start options and begin the migration.
+        </p>
+      )}
+      {!isIdle && state === 'INITIALIZING' && (
+        <p className="card-desc" style={{ marginTop: 12, marginBottom: 0 }}>
+          mongosync is initializing — controls become available once it has
+          connected to both clusters.
         </p>
       )}
       {isIdle && showStart && (
@@ -383,7 +420,10 @@ function ProgressSection({ progress }: { progress: Progress }) {
       </div>
       <ProgressBar
         value={pct}
-        indeterminate={pct === undefined && progress.state === 'RUNNING'}
+        indeterminate={
+          pct === undefined &&
+          (progress.state === 'RUNNING' || progress.state === 'INITIALIZING')
+        }
       />
       <div style={{ marginTop: 6 }} className="muted">
         {inCopy ? 'Collection copy: ' : 'Copied: '}
@@ -496,10 +536,16 @@ function VerificationCard({ progress }: { progress: Progress }) {
   )
 }
 
-function LogsCard() {
-  const [open, setOpen] = useState(false)
+function LogsCard({ defaultOpen }: { defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(!!defaultOpen)
   const [lines, setLines] = useState<string[]>([])
   const boxRef = useRef<HTMLDivElement>(null)
+
+  // Auto-expand when the caller signals it is worth showing (e.g. a stuck
+  // initialization), while still letting the user collapse it afterwards.
+  useEffect(() => {
+    if (defaultOpen) setOpen(true)
+  }, [defaultOpen])
 
   useEffect(() => {
     if (!open) return

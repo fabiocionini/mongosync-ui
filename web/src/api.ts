@@ -51,12 +51,34 @@ export const api = {
   stopSession: () => request<SessionView>('DELETE', '/api/session'),
 
   progress: () => request<ProgressResponse>('GET', '/api/progress'),
-  start: (opts: StartOptions) =>
-    request<unknown>('POST', '/api/start', opts),
-  pause: () => request<unknown>('POST', '/api/pause'),
-  resume: () => request<unknown>('POST', '/api/resume'),
-  commit: () => request<unknown>('POST', '/api/commit'),
-  reverse: () => request<unknown>('POST', '/api/reverse'),
+
+  // mongosync returns HTTP 200 with {success:false,...} for logical failures,
+  // so action results must be checked explicitly, not just by HTTP status.
+  start: async (opts: StartOptions) =>
+    throwIfFailed(await request<MongosyncResult>('POST', '/api/start', opts)),
+  pause: async () =>
+    throwIfFailed(await request<MongosyncResult>('POST', '/api/pause')),
+  resume: async () =>
+    throwIfFailed(await request<MongosyncResult>('POST', '/api/resume')),
+  commit: async () =>
+    throwIfFailed(await request<MongosyncResult>('POST', '/api/commit')),
+  reverse: async () =>
+    throwIfFailed(await request<MongosyncResult>('POST', '/api/reverse')),
 
   logs: () => request<LogsResponse>('GET', '/api/logs'),
+}
+
+interface MongosyncResult {
+  success?: boolean
+  error?: string
+  errorDescription?: string
+}
+
+// throwIfFailed surfaces mongosync's {success:false} error envelope.
+function throwIfFailed(data: MongosyncResult): void {
+  if (data && data.success === false) {
+    throw new Error(
+      data.errorDescription || data.error || 'mongosync rejected the request',
+    )
+  }
 }

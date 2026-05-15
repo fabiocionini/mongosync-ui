@@ -16,3 +16,9 @@ web/dist/*
 
 # Runtime working directory (if created in-tree)
 mongosync-ui-data/
+
+# Test environment replica-set keyfile (generated, secret)
+testenv/.keyfile
+
+# mongosync runtime metrics output
+metrics/

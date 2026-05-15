@@ -32,6 +32,8 @@ export interface SessionView {
   startedAt?: string
   config: MigrationConfig
   binary: BinaryStatus
+  processExited?: boolean
+  exitReason?: string
 }
 
 export interface VerificationPhase {

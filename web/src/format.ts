@@ -39,6 +39,8 @@ export function stateBadgeColor(
       return 'green'
     case 'IDLE':
       return 'gray'
+    case 'INITIALIZING':
+      return 'blue'
     case 'PAUSED':
       return 'yellow'
     case 'COMMITTING':

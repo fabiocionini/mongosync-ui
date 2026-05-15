@@ -1,0 +1,57 @@
+# Two single-node MongoDB replica sets for testing mongosync-ui.
+#
+# mongosync requires:
+#  - replica sets (it reads change streams), hence --replSet
+#  - authentication, because it validates the connecting user's privileges;
+#    an unauthenticated connection reports no privileges and is rejected.
+#
+# Auth on a replica set also requires a keyfile for internal member auth. The
+# entrypoint wrapper copies the host keyfile to a container-private path and
+# fixes its ownership/permissions (mongod refuses a group/other-readable one).
+#
+# Internal mongod ports match the published host ports so a replica-set member
+# advertised as "localhost:<port>" resolves identically from the host (where
+# mongosync-ui runs) and from inside the container. Ports 27117/27118 avoid
+# colliding with a local MongoDB on the default 27017.
+services:
+  mongo-source:
+    image: mongo:8.0
+    container_name: msui-mongo-source
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -e
+        cp /run/keyfile-src /run/keyfile
+        chmod 400 /run/keyfile
+        chown mongodb:mongodb /run/keyfile
+        exec docker-entrypoint.sh mongod \
+          --replSet rs-source --port 27117 --bind_ip_all \
+          --auth --keyFile /run/keyfile
+    ports:
+      - "27117:27117"
+    volumes:
+      - ./.keyfile:/run/keyfile-src:ro
+      - mongo-source-data:/data/db
+
+  mongo-dest:
+    image: mongo:8.0
+    container_name: msui-mongo-dest
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -e
+        cp /run/keyfile-src /run/keyfile
+        chmod 400 /run/keyfile
+        chown mongodb:mongodb /run/keyfile
+        exec docker-entrypoint.sh mongod \
+          --replSet rs-dest --port 27118 --bind_ip_all \
+          --auth --keyFile /run/keyfile
+    ports:
+      - "27118:27118"
+    volumes:
+      - ./.keyfile:/run/keyfile-src:ro
+      - mongo-dest-data:/data/db
+
+volumes:
+  mongo-source-data:
+  mongo-dest-data:

@@ -81,8 +81,43 @@ func (s *Session) statePath() string   { return filepath.Join(s.workdir, "state.
 func (s *Session) ProcLogPath() string { return s.procLogPath() }
 
 // MongosyncLogPath is the structured log file written by mongosync itself.
+// mongosync writes mongosync.log directly into its configured logPath.
 func (s *Session) MongosyncLogPath() string {
-	return filepath.Join(s.logsDir(), "mongosync", "mongosync.log")
+	return filepath.Join(s.logsDir(), "mongosync.log")
+}
+
+// LastMongosyncError returns a human-readable reason from the most recent
+// fatal or error entry in the mongosync log, or "" if none is found. It is
+// used to explain why a local mongosync process exited.
+func (s *Session) LastMongosyncError() string {
+	data, err := os.ReadFile(s.MongosyncLogPath())
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		var entry struct {
+			Level   string `json:"level"`
+			Message string `json:"message"`
+			Error   struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(line), &entry) != nil {
+			continue
+		}
+		if entry.Level == "fatal" || entry.Level == "error" {
+			if entry.Error.Message != "" {
+				return entry.Error.Message
+			}
+			return entry.Message
+		}
+	}
+	return ""
 }
 
 // restore loads state.json. A previously local session whose process is no
@@ -184,7 +219,7 @@ func (s *Session) StartLocal(cfg MigrationConfig) error {
 		return fmt.Errorf("write mongosync config: %w", err)
 	}
 
-	if err := s.proc.Start(s.bin.BinaryPath(), s.configPath(), s.procLogPath()); err != nil {
+	if err := s.proc.Start(s.bin.BinaryPath(), s.configPath(), s.procLogPath(), s.workdir); err != nil {
 		return fmt.Errorf("launch mongosync: %w", err)
 	}
 

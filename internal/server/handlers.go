@@ -47,26 +47,36 @@ func (s *Server) handleBinaryInstall(w http.ResponseWriter, r *http.Request) {
 
 // sessionView is the combined session + binary state sent to the UI.
 type sessionView struct {
-	Mode       string                  `json:"mode"`
-	APIBaseURL string                  `json:"apiBaseUrl,omitempty"`
-	PID        int                     `json:"pid,omitempty"`
-	Running    bool                    `json:"running"`
-	StartedAt  string                  `json:"startedAt,omitempty"`
-	Config     session.MigrationConfig `json:"config"`
-	Binary     binary.Status           `json:"binary"`
+	Mode          string                  `json:"mode"`
+	APIBaseURL    string                  `json:"apiBaseUrl,omitempty"`
+	PID           int                     `json:"pid,omitempty"`
+	Running       bool                    `json:"running"`
+	StartedAt     string                  `json:"startedAt,omitempty"`
+	Config        session.MigrationConfig `json:"config"`
+	Binary        binary.Status           `json:"binary"`
+	ProcessExited bool                    `json:"processExited"`
+	ExitReason    string                  `json:"exitReason,omitempty"`
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	st := s.sess.Snapshot()
-	writeJSON(w, http.StatusOK, sessionView{
+	running := s.sess.Running()
+	view := sessionView{
 		Mode:       st.Mode,
 		APIBaseURL: st.APIBaseURL,
 		PID:        st.PID,
-		Running:    s.sess.Running(),
+		Running:    running,
 		StartedAt:  st.StartedAt,
 		Config:     st.Config,
 		Binary:     s.bin.Status(),
-	})
+	}
+	// A local session whose process is no longer running has crashed or been
+	// terminated externally; surface the reason so the UI can explain it.
+	if st.Mode == session.ModeLocal && !running {
+		view.ProcessExited = true
+		view.ExitReason = s.sess.LastMongosyncError()
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handleStartLocal(w http.ResponseWriter, r *http.Request) {
