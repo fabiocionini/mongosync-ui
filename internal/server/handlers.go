@@ -6,9 +6,9 @@ import (
 	"os"
 	"strconv"
 
-	"mongosync-ui/internal/binary"
-	"mongosync-ui/internal/client"
-	"mongosync-ui/internal/session"
+	"github.com/fabiocionini/mongosync-ui/internal/binary"
+	"github.com/fabiocionini/mongosync-ui/internal/client"
+	"github.com/fabiocionini/mongosync-ui/internal/session"
 )
 
 // writeJSON serializes v as a JSON response with the given status code.

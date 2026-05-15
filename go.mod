@@ -1,3 +1,3 @@
-module mongosync-ui
+module github.com/fabiocionini/mongosync-ui
 
 go 1.26

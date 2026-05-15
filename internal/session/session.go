@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"mongosync-ui/internal/binary"
-	"mongosync-ui/internal/client"
-	"mongosync-ui/internal/process"
+	"github.com/fabiocionini/mongosync-ui/internal/binary"
+	"github.com/fabiocionini/mongosync-ui/internal/client"
+	"github.com/fabiocionini/mongosync-ui/internal/process"
 )
 
 // Session modes.

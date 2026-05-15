@@ -139,3 +139,15 @@ concurrent migrations can be added later without reworking it.
   `mongosync.yaml` with `0600` permissions and are sent only to mongosync.
 - Connection strings stored in the session history have their passwords
   redacted.
+
+## Disclaimer
+
+mongosync-ui is an unofficial, community-built tool. It is **not affiliated
+with, endorsed by, or sponsored by MongoDB, Inc.** "MongoDB" and "mongosync"
+are trademarks of MongoDB, Inc. The tool downloads the official `mongosync`
+binary from MongoDB at runtime; your use of `mongosync` is governed by
+MongoDB's own licensing terms.
+
+## License
+
+Released under the [MIT License](LICENSE).

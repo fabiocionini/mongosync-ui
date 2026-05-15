@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"mongosync-ui/internal/binary"
-	"mongosync-ui/internal/session"
+	"github.com/fabiocionini/mongosync-ui/internal/binary"
+	"github.com/fabiocionini/mongosync-ui/internal/session"
 )
 
 // Server wires HTTP handlers to the session and binary managers.

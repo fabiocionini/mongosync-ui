@@ -15,10 +15,10 @@ import (
 	"runtime"
 	"time"
 
-	"mongosync-ui/internal/binary"
-	"mongosync-ui/internal/server"
-	"mongosync-ui/internal/session"
-	"mongosync-ui/web"
+	"github.com/fabiocionini/mongosync-ui/internal/binary"
+	"github.com/fabiocionini/mongosync-ui/internal/server"
+	"github.com/fabiocionini/mongosync-ui/internal/session"
+	"github.com/fabiocionini/mongosync-ui/web"
 )
 
 // version is overridden at build time via -ldflags.
