@@ -1,5 +1,6 @@
 # Go build output
 /dist/
+/releases/
 *.test
 
 # Node / Vite

@@ -1,5 +1,5 @@
 # mongosync-ui — build automation
-VERSION ?= dev
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: help web build run dev release clean
