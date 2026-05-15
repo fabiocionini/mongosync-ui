@@ -401,7 +401,20 @@ function StartPanel({
   )
 }
 
+// sourceWritesBlocked reports whether mongosync is blocking user writes on the
+// source cluster. mongosync does this once it enters the commit/cutover phase;
+// there is no dedicated field, so it is derived from the progress "info" value
+// (and corroborated by any write-blocking warning).
+function sourceWritesBlocked(progress: Progress): boolean {
+  const info = (progress.info || '').toLowerCase()
+  if (info.includes('commit')) return true
+  return (progress.warnings || []).some(
+    (w) => /source/i.test(w) && /(write|block)/i.test(w),
+  )
+}
+
 function ProgressSection({ progress }: { progress: Progress }) {
+  const srcBlocked = sourceWritesBlocked(progress)
   const copied = progress.collectionCopy?.estimatedCopiedBytes
   const total = progress.collectionCopy?.estimatedTotalBytes
   const pct =
@@ -450,9 +463,26 @@ function ProgressSection({ progress }: { progress: Progress }) {
           small
         />
         <Metric
-          label="Writes to destination"
-          value={progress.canWrite ? 'allowed' : 'blocked'}
+          label="Writes to source"
           small
+          value={
+            srcBlocked ? (
+              <Badge color="yellow">blocked</Badge>
+            ) : (
+              <Badge color="green">allowed</Badge>
+            )
+          }
+        />
+        <Metric
+          label="Writes to destination"
+          small
+          value={
+            progress.canWrite ? (
+              <Badge color="green">allowed</Badge>
+            ) : (
+              <Badge color="gray">blocked</Badge>
+            )
+          }
         />
         <Metric
           label="Commit ready"
