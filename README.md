@@ -34,7 +34,7 @@ Download the binary for your platform and run it:
 ./mongosync-ui
 ```
 
-It serves the UI on <http://localhost:8080> and opens your browser. The home
+It serves the UI on <http://localhost:8999> and opens your browser. The home
 screen is the **sessions list**. Click **New migration** and choose:
 
 1. **Run locally** — install the mongosync binary, enter your source and
@@ -52,7 +52,7 @@ available.
 
 | Flag         | Default            | Description                                  |
 |--------------|--------------------|----------------------------------------------|
-| `--port`     | `8080`             | Port for the mongosync-ui web interface      |
+| `--port`     | `8999`             | Port for the mongosync-ui web interface      |
 | `--workdir`  | `~/.mongosync-ui`  | Directory for the mongosync binary and data  |
 | `--open`     | `true`             | Open the UI in a browser on startup          |
 | `--version`  |                    | Print version and exit                       |
@@ -103,10 +103,10 @@ make release        # output in ./dist/
 Run the Go backend and the Vite dev server (with hot reload) separately:
 
 ```bash
-# Terminal 1 — backend on :8080
+# Terminal 1 — backend on :8999
 make dev
 
-# Terminal 2 — UI on :5173, proxying /api to :8080
+# Terminal 2 — UI on :5173, proxying /api to :8999
 cd web && npm install && npm run dev
 ```
 

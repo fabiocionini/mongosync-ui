@@ -30,7 +30,7 @@ func main() {
 		workdir string
 		open    bool
 	)
-	flag.IntVar(&port, "port", 8080, "port for the mongosync-ui web interface")
+	flag.IntVar(&port, "port", 8999, "port for the mongosync-ui web interface")
 	flag.StringVar(&workdir, "workdir", defaultWorkdir(), "directory for the mongosync binary and session data")
 	flag.BoolVar(&open, "open", true, "open the UI in a browser on startup")
 	showVersion := flag.Bool("version", false, "print version and exit")
