@@ -130,16 +130,29 @@ func fetchFeed() (*feed, error) {
 
 func isPreview(v string) bool { return strings.Contains(strings.ToLower(v), "preview") }
 
-// Versions returns the available stable mongosync versions, newest first.
+// Versions returns the stable mongosync versions installable on the current
+// platform, newest first. Versions without a build for this OS/arch are
+// omitted — for example mongosync ships no Windows build after 1.5.0.
 func Versions() ([]string, error) {
+	name, arch, err := platformTarget()
+	if err != nil {
+		return nil, err
+	}
 	f, err := fetchFeed()
 	if err != nil {
 		return nil, err
 	}
 	var out []string
 	for i := len(f.Versions) - 1; i >= 0; i-- {
-		if v := f.Versions[i].Version; !isPreview(v) {
-			out = append(out, v)
+		v := f.Versions[i]
+		if isPreview(v.Version) {
+			continue
+		}
+		for _, d := range v.Downloads {
+			if d.Name == name && d.Arch == arch {
+				out = append(out, v.Version)
+				break
+			}
 		}
 	}
 	return out, nil
@@ -162,38 +175,45 @@ func platformTarget() (name, arch string, err error) {
 	return "", "", fmt.Errorf("unsupported platform %s/%s", runtime.GOOS, runtime.GOARCH)
 }
 
-// resolve picks the download entry for this platform. An empty version
-// selects the newest stable release.
+// resolve picks the download entry for this platform. An empty version selects
+// the newest stable release that has a build for the current OS/arch.
 func resolve(f *feed, version string) (download, string, error) {
 	name, arch, err := platformTarget()
 	if err != nil {
 		return download{}, "", err
 	}
-	var chosen *feedVersion
-	if version == "" {
-		for i := len(f.Versions) - 1; i >= 0; i-- {
-			if !isPreview(f.Versions[i].Version) {
-				chosen = &f.Versions[i]
-				break
+	find := func(v *feedVersion) (download, bool) {
+		for _, d := range v.Downloads {
+			if d.Name == name && d.Arch == arch {
+				return d, true
 			}
 		}
-	} else {
-		for i := range f.Versions {
-			if f.Versions[i].Version == version {
-				chosen = &f.Versions[i]
-				break
-			}
-		}
+		return download{}, false
 	}
-	if chosen == nil {
+
+	if version != "" {
+		for i := range f.Versions {
+			if f.Versions[i].Version != version {
+				continue
+			}
+			if d, ok := find(&f.Versions[i]); ok {
+				return d, version, nil
+			}
+			return download{}, "", fmt.Errorf("mongosync %s has no build for %s/%s", version, name, arch)
+		}
 		return download{}, "", fmt.Errorf("mongosync version %q not found in feed", version)
 	}
-	for _, d := range chosen.Downloads {
-		if d.Name == name && d.Arch == arch {
-			return d, chosen.Version, nil
+
+	for i := len(f.Versions) - 1; i >= 0; i-- {
+		v := &f.Versions[i]
+		if isPreview(v.Version) {
+			continue
+		}
+		if d, ok := find(v); ok {
+			return d, v.Version, nil
 		}
 	}
-	return download{}, "", fmt.Errorf("no %s/%s build for mongosync %s", name, arch, chosen.Version)
+	return download{}, "", fmt.Errorf("no mongosync build available for %s/%s", name, arch)
 }
 
 // Install downloads the requested mongosync version in the background. An
