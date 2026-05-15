@@ -25,12 +25,15 @@ TARGETS=(
 )
 
 for target in "${TARGETS[@]}"; do
-  os="${target%/*}"
+  goos="${target%/*}"
   arch="${target#*/}"
-  out="$OUT/mongosync-ui-${VERSION}-${os}-${arch}"
-  [ "$os" = "windows" ] && out="${out}.exe"
+  # Label darwin builds "macos" in the filename (GOOS stays "darwin").
+  label="$goos"
+  [ "$goos" = "darwin" ] && label="macos"
+  out="$OUT/mongosync-ui-${VERSION}-${label}-${arch}"
+  [ "$goos" = "windows" ] && out="${out}.exe"
   echo "    ${target} -> ${out}"
-  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$arch" \
     go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
     -o "$out" ./cmd/mongosync-ui
 done
