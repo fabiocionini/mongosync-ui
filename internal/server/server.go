@@ -36,6 +36,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/binary/versions", s.handleBinaryVersions)
 	mux.HandleFunc("POST /api/binary/install", s.handleBinaryInstall)
 
+	mux.HandleFunc("GET /api/sessions", s.handleSessions)
+	mux.HandleFunc("GET /api/sessions/{id}", s.handleSessionByID)
+	mux.HandleFunc("GET /api/sessions/{id}/logs", s.handleSessionLogs)
+
 	mux.HandleFunc("GET /api/session", s.handleSession)
 	mux.HandleFunc("POST /api/session/local", s.handleStartLocal)
 	mux.HandleFunc("POST /api/session/remote", s.handleAttachRemote)
@@ -47,8 +51,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/resume", s.handleAction("resume"))
 	mux.HandleFunc("POST /api/commit", s.handleAction("commit"))
 	mux.HandleFunc("POST /api/reverse", s.handleAction("reverse"))
-
-	mux.HandleFunc("GET /api/logs", s.handleLogs)
 
 	mux.Handle("/", s.spaHandler())
 

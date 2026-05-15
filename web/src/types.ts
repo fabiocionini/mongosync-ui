@@ -22,20 +22,51 @@ export interface MigrationConfig {
   version: string
 }
 
-export type SessionMode = 'none' | 'local' | 'remote'
+export type SessionMode = 'local' | 'remote'
+export type SessionStatus = 'active' | 'committed' | 'stopped' | 'failed'
 
-export interface SessionView {
+// SessionSummary is the peak measurable progress observed for a session.
+export interface SessionSummary {
+  phase?: string
+  copiedBytes?: number
+  totalBytes?: number
+  eventsApplied?: number
+  indexesBuilt?: number
+  totalIndexes?: number
+  verifiedDocuments?: number
+  estimatedDocuments?: number
+  verifiedCollections?: number
+  totalCollections?: number
+}
+
+// SessionRecord is one migration session, current or historical.
+export interface SessionRecord {
+  id: string
   mode: SessionMode
-  apiBaseUrl?: string
-  pid?: number
-  running: boolean
-  startedAt?: string
-  config: MigrationConfig
-  binary: BinaryStatus
-  processExited?: boolean
-  exitReason?: string
+  apiBaseUrl: string
+  port?: number
+  source: string
+  destination: string
+  mongosyncVersion?: string
+  startedAt: string
+  endedAt?: string
+  status: SessionStatus
+  lastState?: string
+  outcome?: string
+  summary?: SessionSummary
+}
+
+// ActiveView is the active session enriched with live detail.
+export interface ActiveView {
+  record: SessionRecord
   initHint?: string
   initHintProblem?: boolean
+}
+
+// SessionResponse is returned by GET /api/session.
+export interface SessionResponse {
+  active: ActiveView | null
+  binary: BinaryStatus
 }
 
 export interface VerificationPhase {
@@ -57,6 +88,12 @@ export interface Progress {
   collectionCopy?: {
     estimatedTotalBytes?: number
     estimatedCopiedBytes?: number
+  }
+  indexBuilding?: {
+    indexesBuilt?: number
+    totalIndexesToBuild?: number
+    collectionsFinished?: number
+    collectionsTotal?: number
   }
   directionMapping?: { Source?: string; Destination?: string }
   source?: { pingLatencyMs?: number }

@@ -11,21 +11,24 @@ import {
   stateBadgeColor,
 } from '../format'
 import type {
+  ActiveView,
   Namespace,
   Progress,
   ProgressResponse,
-  SessionView,
   StartOptions,
 } from '../types'
 import { Badge, Banner, Button, Card, Checkbox, Field, Metric, ProgressBar, Spinner } from './ui'
 
 export function MonitorView({
-  session,
+  active,
   onChanged,
+  onBack,
 }: {
-  session: SessionView
+  active: ActiveView
   onChanged: () => void
+  onBack: () => void
 }) {
+  const rec = active.record
   const [resp, setResp] = useState<ProgressResponse | null>(null)
   const [pollError, setPollError] = useState('')
   const [actionError, setActionError] = useState('')
@@ -79,6 +82,9 @@ export function MonitorView({
 
   return (
     <div>
+      <Button small onClick={onBack}>
+        ← All sessions
+      </Button>
       <div
         style={{
           display: 'flex',
@@ -86,6 +92,7 @@ export function MonitorView({
           alignItems: 'flex-start',
           gap: 16,
           flexWrap: 'wrap',
+          marginTop: 12,
         }}
       >
         <div>
@@ -98,32 +105,20 @@ export function MonitorView({
             )}
           </h1>
           <p className="page-subtitle" style={{ marginBottom: 0 }}>
-            {session.mode === 'local' ? (
-              <>
-                Managed local mongosync · API {session.apiBaseUrl}
-                {session.pid ? ` · PID ${session.pid}` : ''}
-              </>
+            {rec.mode === 'local' ? (
+              <>Managed local mongosync · API {rec.apiBaseUrl}</>
             ) : (
-              <>Attached to remote mongosync · {session.apiBaseUrl}</>
+              <>Attached to remote mongosync · {rec.apiBaseUrl}</>
             )}
           </p>
         </div>
         <Button variant="danger" onClick={stopSession} loading={busy === 'stop'}>
-          {session.mode === 'local' ? 'Stop & shut down' : 'Detach'}
+          {rec.mode === 'local' ? 'Stop & shut down' : 'Detach'}
         </Button>
       </div>
 
       <div className="stack" style={{ marginTop: 24 }}>
-        {session.processExited && (
-          <Banner variant="danger">
-            <b>mongosync has stopped.</b>{' '}
-            {session.exitReason ||
-              'The local mongosync process exited unexpectedly.'}{' '}
-            Review the logs below, then use “Stop &amp; shut down” to return to
-            setup.
-          </Banner>
-        )}
-        {pollError && !session.processExited && (
+        {pollError && (
           <Banner variant="danger">
             Cannot reach mongosync: {pollError}
           </Banner>
@@ -137,16 +132,16 @@ export function MonitorView({
         )}
 
         {state === 'INITIALIZING' &&
-          (session.initHint ? (
-            <Banner variant={session.initHintProblem ? 'warning' : 'info'}>
-              {session.initHintProblem ? (
+          (active.initHint ? (
+            <Banner variant={active.initHintProblem ? 'warning' : 'info'}>
+              {active.initHintProblem ? (
                 <>
                   mongosync cannot reach a cluster yet. Latest attempt:{' '}
-                  {session.initHint} Confirm both connection strings point to
+                  {active.initHint} Confirm both connection strings point to
                   reachable replica sets, then check the logs below.
                 </>
               ) : (
-                session.initHint
+                active.initHint
               )}
             </Banner>
           ) : (
@@ -176,6 +171,7 @@ export function MonitorView({
         />
 
         {progress && <ProgressSection progress={progress} />}
+        {progress?.indexBuilding && <IndexBuildingCard progress={progress} />}
         {progress && <DirectionCard progress={progress} />}
         {progress?.verification && <VerificationCard progress={progress} />}
         {progress?.warnings && progress.warnings.length > 0 && (
@@ -190,12 +186,10 @@ export function MonitorView({
           </Card>
         )}
 
-        {session.mode === 'local' && (
+        {rec.mode === 'local' && (
           <LogsCard
-            defaultOpen={
-              (!!session.initHint && !!session.initHintProblem) ||
-              !!session.processExited
-            }
+            sessionId={rec.id}
+            defaultOpen={!!active.initHint && !!active.initHintProblem}
           />
         )}
       </div>
@@ -500,6 +494,53 @@ function ProgressSection({ progress }: { progress: Progress }) {
   )
 }
 
+function IndexBuildingCard({ progress }: { progress: Progress }) {
+  const ib = progress.indexBuilding
+  if (!ib) return null
+  const built = ib.indexesBuilt ?? 0
+  const total = ib.totalIndexesToBuild ?? 0
+  const pct = total > 0 ? Math.min(100, (built / total) * 100) : undefined
+
+  return (
+    <Card
+      title="Index building"
+      desc="Indexes rebuilt on the destination cluster after the data copy."
+    >
+      <div
+        style={{
+          marginBottom: 6,
+          display: 'flex',
+          justifyContent: 'space-between',
+        }}
+      >
+        <span>
+          <b>{formatNumber(built)}</b> of <b>{formatNumber(total)}</b> indexes
+          built
+        </span>
+        {pct !== undefined && (
+          <span className="muted">{pct.toFixed(0)}%</span>
+        )}
+      </div>
+      <ProgressBar value={pct} />
+
+      <div className="metrics" style={{ marginTop: 18 }}>
+        <Metric
+          label="Indexes built"
+          value={`${formatNumber(ib.indexesBuilt)} / ${formatNumber(total)}`}
+          small
+        />
+        <Metric
+          label="Collections finished"
+          value={`${formatNumber(ib.collectionsFinished)} / ${formatNumber(
+            ib.collectionsTotal,
+          )}`}
+          small
+        />
+      </div>
+    </Card>
+  )
+}
+
 function DirectionCard({ progress }: { progress: Progress }) {
   const src = progress.directionMapping?.Source
   const dst = progress.directionMapping?.Destination
@@ -572,7 +613,13 @@ function VerificationCard({ progress }: { progress: Progress }) {
   )
 }
 
-function LogsCard({ defaultOpen }: { defaultOpen?: boolean }) {
+function LogsCard({
+  sessionId,
+  defaultOpen,
+}: {
+  sessionId: string
+  defaultOpen?: boolean
+}) {
   const [open, setOpen] = useState(!!defaultOpen)
   const [lines, setLines] = useState<string[]>([])
   const boxRef = useRef<HTMLDivElement>(null)
@@ -588,7 +635,7 @@ function LogsCard({ defaultOpen }: { defaultOpen?: boolean }) {
     let active = true
     const load = async () => {
       try {
-        const r = await api.logs()
+        const r = await api.sessionLogs(sessionId)
         if (active) setLines(r.lines)
       } catch {
         /* ignore transient log read errors */
@@ -600,7 +647,7 @@ function LogsCard({ defaultOpen }: { defaultOpen?: boolean }) {
       active = false
       clearInterval(id)
     }
-  }, [open])
+  }, [open, sessionId])
 
   useEffect(() => {
     if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight

@@ -1,13 +1,13 @@
-// Package session ties together the mongosync binary, a supervised local
-// process and the control client into a single migration session. Only one
-// session exists at a time (local or attached to a remote instance).
+// Package session manages migration sessions. Each run — local or attached to
+// a remote mongosync — is recorded as a Record in a persistent registry, so
+// the history of every migration is browsable. At most one session is active
+// at a time; the registry model is ready to lift that limit later.
 package session
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +18,20 @@ import (
 	"mongosync-ui/internal/binary"
 	"mongosync-ui/internal/client"
 	"mongosync-ui/internal/process"
+)
+
+// Session modes.
+const (
+	ModeLocal  = "local"
+	ModeRemote = "remote"
+)
+
+// Session statuses.
+const (
+	StatusActive    = "active"
+	StatusCommitted = "committed"
+	StatusStopped   = "stopped"
+	StatusFailed    = "failed"
 )
 
 // Namespace selects a database and, optionally, specific collections.
@@ -34,310 +48,431 @@ type MigrationConfig struct {
 	Version        string `json:"version"`
 }
 
-// State is the persisted session state.
-type State struct {
-	Mode       string          `json:"mode"` // none | local | remote
-	APIBaseURL string          `json:"apiBaseUrl,omitempty"`
-	PID        int             `json:"pid,omitempty"`
-	Config     MigrationConfig `json:"config"`
-	StartedAt  string          `json:"startedAt,omitempty"`
+// Record is one migration session — current or historical.
+type Record struct {
+	ID               string     `json:"id"`
+	Mode             string     `json:"mode"`
+	APIBaseURL       string     `json:"apiBaseUrl"`
+	Port             int        `json:"port,omitempty"`
+	Source           string     `json:"source"`      // display string, credentials redacted
+	Destination      string     `json:"destination"` // display string, credentials redacted
+	MongosyncVersion string     `json:"mongosyncVersion,omitempty"`
+	StartedAt        time.Time  `json:"startedAt"`
+	EndedAt          *time.Time `json:"endedAt,omitempty"`
+	Status           string     `json:"status"`
+	LastState        string     `json:"lastState,omitempty"` // last observed mongosync state
+	Outcome          string     `json:"outcome,omitempty"`   // failure reason, if any
+	Summary          *Summary   `json:"summary,omitempty"`   // peak observed progress
 }
 
-// Session coordinates the migration lifecycle.
+// Summary is a snapshot of a migration's measurable progress. Each field holds
+// the largest value observed, so mongosync resetting its counters after commit
+// cannot erase the real totals.
+type Summary struct {
+	Phase               string `json:"phase,omitempty"`
+	CopiedBytes         int64  `json:"copiedBytes,omitempty"`
+	TotalBytes          int64  `json:"totalBytes,omitempty"`
+	EventsApplied       int64  `json:"eventsApplied,omitempty"`
+	IndexesBuilt        int    `json:"indexesBuilt,omitempty"`
+	TotalIndexes        int    `json:"totalIndexes,omitempty"`
+	VerifiedDocuments   int64  `json:"verifiedDocuments,omitempty"`
+	EstimatedDocuments  int64  `json:"estimatedDocuments,omitempty"`
+	VerifiedCollections int    `json:"verifiedCollections,omitempty"`
+	TotalCollections    int    `json:"totalCollections,omitempty"`
+}
+
+// store is the on-disk shape of the registry.
+type store struct {
+	Records []*Record `json:"records"`
+}
+
+// maxRecords caps the registry so it cannot grow without bound.
+const maxRecords = 50
+
+// Session owns the migration registry and the (single) active process.
 type Session struct {
 	workdir string
 	bin     *binary.Manager
 	proc    *process.Manager
 
-	mu    sync.Mutex
-	state State
+	mu       sync.Mutex
+	records  []*Record // oldest first
+	activeID string
 }
 
-const (
-	ModeNone   = "none"
-	ModeLocal  = "local"
-	ModeRemote = "remote"
-)
-
-// New builds a Session for the given working directory and binary manager,
-// restoring any previous state from disk.
+// New builds a Session, loading any previous registry from disk.
 func New(workdir string, bin *binary.Manager) *Session {
-	s := &Session{
-		workdir: workdir,
-		bin:     bin,
-		proc:    process.New(),
-		state:   State{Mode: ModeNone},
-	}
-	s.restore()
+	s := &Session{workdir: workdir, bin: bin, proc: process.New()}
+	s.load()
 	return s
 }
 
-func (s *Session) configDir() string   { return filepath.Join(s.workdir, "config") }
-func (s *Session) logsDir() string     { return filepath.Join(s.workdir, "logs") }
-func (s *Session) configPath() string  { return filepath.Join(s.configDir(), "mongosync.yaml") }
-func (s *Session) procLogPath() string { return filepath.Join(s.logsDir(), "process.log") }
-func (s *Session) statePath() string   { return filepath.Join(s.workdir, "state.json") }
-
-// ProcLogPath is the file capturing the mongosync process stdout/stderr.
-func (s *Session) ProcLogPath() string { return s.procLogPath() }
-
-// MongosyncLogPath is the structured log file written by mongosync itself.
-// mongosync writes mongosync.log directly into its configured logPath.
-func (s *Session) MongosyncLogPath() string {
-	return filepath.Join(s.logsDir(), "mongosync.log")
+func (s *Session) sessionsRoot() string { return filepath.Join(s.workdir, "sessions") }
+func (s *Session) storePath() string    { return filepath.Join(s.workdir, "sessions.json") }
+func (s *Session) sessionDir(id string) string {
+	return filepath.Join(s.sessionsRoot(), id)
+}
+func (s *Session) configPath(id string) string {
+	return filepath.Join(s.sessionDir(id), "mongosync.yaml")
+}
+func (s *Session) procLogPath(id string) string {
+	return filepath.Join(s.sessionDir(id), "process.log")
 }
 
-// LastMongosyncError returns a human-readable reason from the most recent
-// fatal or error entry in the mongosync log, or "" if none is found. It is
-// used to explain why a local mongosync process exited.
-func (s *Session) LastMongosyncError() string {
-	data, err := os.ReadFile(s.MongosyncLogPath())
-	if err != nil {
-		return ""
+// MongosyncLogPath is the structured log file mongosync writes for a session.
+func (s *Session) MongosyncLogPath(id string) string {
+	return filepath.Join(s.sessionDir(id), "mongosync.log")
+}
+
+// ProcLogPath is the captured stdout/stderr of a session's mongosync process.
+func (s *Session) ProcLogPath(id string) string { return s.procLogPath(id) }
+
+// load reads the registry and reconciles any session left active by a prior
+// run: still reachable ones are kept (as unmanaged remote sessions), the rest
+// are finalized.
+func (s *Session) load() {
+	raw, err := os.ReadFile(s.storePath())
+	if err == nil {
+		var st store
+		if json.Unmarshal(raw, &st) == nil {
+			s.records = st.Records
+		}
 	}
-	lines := strings.Split(string(data), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
+	for _, r := range s.records {
+		if r.Status != StatusActive {
 			continue
 		}
-		var entry struct {
-			Level   string `json:"level"`
-			Message string `json:"message"`
-			Error   struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if json.Unmarshal([]byte(line), &entry) != nil {
-			continue
-		}
-		if entry.Level == "fatal" || entry.Level == "error" {
-			if entry.Error.Message != "" {
-				return entry.Error.Message
-			}
-			return entry.Message
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := client.New(r.APIBaseURL).Ping(ctx)
+		cancel()
+		if err == nil {
+			// The process is no longer ours to supervise; keep monitoring it
+			// as an attached remote session.
+			r.Mode = ModeRemote
+			s.activeID = r.ID
+		} else {
+			finalize(r, deriveStatus(r, nil))
 		}
 	}
-	return ""
+	s.persistLocked()
 }
 
-// InitializingHint inspects the mongosync log to explain why mongosync is in
-// the INITIALIZING state. It returns a human-readable message and whether the
-// situation indicates a problem (true) rather than expected progress (false).
-// This turns a prolonged INITIALIZING state into a concrete, evidence-based
-// diagnosis instead of a time-based guess.
-func (s *Session) InitializingHint() (message string, problem bool) {
-	f, err := os.Open(s.MongosyncLogPath())
+func (s *Session) persistLocked() {
+	if len(s.records) > maxRecords {
+		s.records = s.records[len(s.records)-maxRecords:]
+	}
+	data, err := json.MarshalIndent(store{Records: s.records}, "", "  ")
 	if err != nil {
-		return "", false
+		return
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return "", false
-	}
-	// Only the tail of the log is relevant; bound the read.
-	const window = 64 * 1024
-	if info.Size() > window {
-		if _, err := f.Seek(info.Size()-window, io.SeekStart); err != nil {
-			return "", false
-		}
-	}
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return "", false
-	}
-	lines := strings.Split(string(data), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		switch {
-		case strings.Contains(line, "transient error"):
-			var e struct {
-				OperationDescription string `json:"operationDescription"`
-				HandledError         struct {
-					Message string `json:"message"`
-				} `json:"handledError"`
-			}
-			if json.Unmarshal([]byte(line), &e) != nil {
-				continue
-			}
-			if e.OperationDescription != "" {
-				return e.OperationDescription, true
-			}
-			return e.HandledError.Message, true
-		case strings.Contains(line, "restarted mongosync after a pause or crash"):
-			return "mongosync found state from a previous run on the destination " +
-				"cluster and is resuming it. It waits up to ~2 minutes before it " +
-				"accepts a new migration. To run a fresh migration, stop this " +
-				"session and point it at clean clusters.", false
-		}
-	}
-	return "", false
+	_ = os.WriteFile(s.storePath(), data, 0o600)
 }
 
-// restore loads state.json. A previously local session whose process is no
-// longer supervised is downgraded to a remote attachment if still reachable,
-// otherwise reset to none.
-func (s *Session) restore() {
-	raw, err := os.ReadFile(s.statePath())
-	if err != nil {
-		return
+func (s *Session) recordLocked(id string) *Record {
+	for _, r := range s.records {
+		if r.ID == id {
+			return r
+		}
 	}
-	var st State
-	if err := json.Unmarshal(raw, &st); err != nil {
-		return
-	}
-	if st.Mode == ModeNone || st.APIBaseURL == "" {
-		s.state = State{Mode: ModeNone}
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if err := client.New(st.APIBaseURL).Ping(ctx); err != nil {
-		s.state = State{Mode: ModeNone}
-		_ = os.Remove(s.statePath())
-		return
-	}
-	// The child process is no longer ours to supervise after a UI restart;
-	// keep monitoring it as a remote attachment.
-	st.Mode = ModeRemote
-	st.PID = 0
-	s.state = st
+	return nil
 }
 
-func (s *Session) persist() {
-	raw, err := json.MarshalIndent(s.state, "", "  ")
-	if err != nil {
+// reconcileLocked finalizes the active session if its local process has died.
+func (s *Session) reconcileLocked() {
+	if s.activeID == "" {
 		return
 	}
-	_ = os.WriteFile(s.statePath(), raw, 0o600)
+	r := s.recordLocked(s.activeID)
+	if r == nil || r.Status != StatusActive {
+		s.activeID = ""
+		return
+	}
+	if r.Mode == ModeLocal && !s.proc.Running() {
+		if r.Outcome == "" {
+			r.Outcome = lastMongosyncError(s.MongosyncLogPath(r.ID))
+		}
+		finalize(r, deriveStatus(r, s.proc.ExitError()))
+		s.activeID = ""
+		s.persistLocked()
+	}
 }
 
-// Snapshot returns a copy of the current state.
-func (s *Session) Snapshot() State {
+// finalize stamps a record as ended with the given status.
+func finalize(r *Record, status string) {
+	if r.EndedAt == nil {
+		now := time.Now().UTC()
+		r.EndedAt = &now
+	}
+	r.Status = status
+}
+
+// deriveStatus chooses an end status from the last observed state.
+func deriveStatus(r *Record, exitErr error) string {
+	if r.LastState == "COMMITTED" {
+		return StatusCommitted
+	}
+	if exitErr != nil {
+		return StatusFailed
+	}
+	return StatusStopped
+}
+
+// Records returns every session, newest first.
+func (s *Session) Records() []Record {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := s.state
-	if st.Mode == ModeLocal {
-		st.PID = s.proc.PID()
+	s.reconcileLocked()
+	out := make([]Record, 0, len(s.records))
+	for i := len(s.records) - 1; i >= 0; i-- {
+		out = append(out, *s.records[i])
 	}
-	return st
+	return out
 }
 
-// Running reports whether a session is active (local or remote).
+// Record returns a single session by id.
+func (s *Session) Record(id string) (Record, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconcileLocked()
+	if r := s.recordLocked(id); r != nil {
+		return *r, true
+	}
+	return Record{}, false
+}
+
+// Active returns the currently active session, if any.
+func (s *Session) Active() (Record, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconcileLocked()
+	if r := s.recordLocked(s.activeID); r != nil {
+		return *r, true
+	}
+	return Record{}, false
+}
+
+// Running reports whether a session is currently active.
 func (s *Session) Running() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.state.Mode == ModeLocal {
-		return s.proc.Running()
-	}
-	return s.state.Mode == ModeRemote
+	_, ok := s.Active()
+	return ok
 }
 
 // Client returns a control client for the active session, or nil when idle.
 func (s *Session) Client() *client.Client {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state.Mode == ModeNone || s.state.APIBaseURL == "" {
-		return nil
+	s.reconcileLocked()
+	if r := s.recordLocked(s.activeID); r != nil {
+		return client.New(r.APIBaseURL)
 	}
-	return client.New(s.state.APIBaseURL)
+	return nil
 }
 
-// StartLocal writes a mongosync config file, launches the binary and waits for
-// its API to become reachable.
-func (s *Session) StartLocal(cfg MigrationConfig) error {
+// StartLocal writes a mongosync config, launches the binary, waits for its API
+// and records the session.
+func (s *Session) StartLocal(cfg MigrationConfig) (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reconcileLocked()
 
-	if s.state.Mode != ModeNone {
-		return fmt.Errorf("a session is already active; stop it first")
+	if s.activeID != "" {
+		return Record{}, fmt.Errorf("a migration is already active; stop it first")
 	}
 	if !s.bin.Installed() {
-		return fmt.Errorf("the mongosync binary is not installed yet")
+		return Record{}, fmt.Errorf("the mongosync binary is not installed yet")
 	}
 	if strings.TrimSpace(cfg.SourceURI) == "" || strings.TrimSpace(cfg.DestinationURI) == "" {
-		return fmt.Errorf("source and destination connection strings are required")
+		return Record{}, fmt.Errorf("source and destination connection strings are required")
 	}
 	if cfg.Port == 0 {
 		cfg.Port = 27182
 	}
 
-	if err := os.MkdirAll(s.configDir(), 0o755); err != nil {
-		return err
+	id := newID()
+	dir := s.sessionDir(id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return Record{}, err
 	}
-	if err := os.MkdirAll(s.logsDir(), 0o755); err != nil {
-		return err
-	}
-	if err := writeConfigYAML(s.configPath(), cfg, s.logsDir()); err != nil {
-		return fmt.Errorf("write mongosync config: %w", err)
-	}
-
-	if err := s.proc.Start(s.bin.BinaryPath(), s.configPath(), s.procLogPath(), s.workdir); err != nil {
-		return fmt.Errorf("launch mongosync: %w", err)
+	if err := writeConfigYAML(s.configPath(id), cfg, dir); err != nil {
+		return Record{}, fmt.Errorf("write mongosync config: %w", err)
 	}
 
-	apiURL := fmt.Sprintf("http://localhost:%d", cfg.Port)
-	if err := client.New(apiURL).WaitReady(60 * time.Second); err != nil {
+	rec := &Record{
+		ID:               id,
+		Mode:             ModeLocal,
+		APIBaseURL:       fmt.Sprintf("http://localhost:%d", cfg.Port),
+		Port:             cfg.Port,
+		Source:           redactURI(cfg.SourceURI),
+		Destination:      redactURI(cfg.DestinationURI),
+		MongosyncVersion: cfg.Version,
+		StartedAt:        time.Now().UTC(),
+		Status:           StatusActive,
+	}
+	s.records = append(s.records, rec)
+	s.activeID = id
+	s.persistLocked()
+
+	if err := s.proc.Start(s.bin.BinaryPath(), s.configPath(id), s.procLogPath(id), dir); err != nil {
+		rec.Outcome = "failed to launch mongosync: " + err.Error()
+		finalize(rec, StatusFailed)
+		s.activeID = ""
+		s.persistLocked()
+		return Record{}, fmt.Errorf("launch mongosync: %w", err)
+	}
+
+	if err := client.New(rec.APIBaseURL).WaitReady(60 * time.Second); err != nil {
 		_ = s.proc.Stop()
-		return err
+		rec.Outcome = lastMongosyncError(s.MongosyncLogPath(id))
+		if rec.Outcome == "" {
+			rec.Outcome = err.Error()
+		}
+		finalize(rec, StatusFailed)
+		s.activeID = ""
+		s.persistLocked()
+		return Record{}, err
 	}
 
-	s.state = State{
-		Mode:       ModeLocal,
-		APIBaseURL: apiURL,
-		PID:        s.proc.PID(),
-		Config:     cfg,
-		StartedAt:  time.Now().UTC().Format(time.RFC3339),
-	}
-	s.persist()
-	return nil
+	s.persistLocked()
+	return *rec, nil
 }
 
-// AttachRemote connects the UI to an already-running mongosync instance.
-func (s *Session) AttachRemote(apiURL string) error {
+// AttachRemote connects the UI to an already-running mongosync and records it.
+func (s *Session) AttachRemote(apiURL string) (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reconcileLocked()
 
-	if s.state.Mode != ModeNone {
-		return fmt.Errorf("a session is already active; stop it first")
+	if s.activeID != "" {
+		return Record{}, fmt.Errorf("a migration is already active; stop it first")
 	}
 	apiURL = normalizeURL(apiURL)
 	if apiURL == "" {
-		return fmt.Errorf("a mongosync API URL is required")
+		return Record{}, fmt.Errorf("a mongosync API URL is required")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.New(apiURL).Ping(ctx); err != nil {
-		return fmt.Errorf("cannot reach mongosync at %s: %w", apiURL, err)
+		return Record{}, fmt.Errorf("cannot reach mongosync at %s: %w", apiURL, err)
 	}
 
-	s.state = State{
+	id := newID()
+	if err := os.MkdirAll(s.sessionDir(id), 0o755); err != nil {
+		return Record{}, err
+	}
+	rec := &Record{
+		ID:         id,
 		Mode:       ModeRemote,
 		APIBaseURL: apiURL,
-		StartedAt:  time.Now().UTC().Format(time.RFC3339),
+		StartedAt:  time.Now().UTC(),
+		Status:     StatusActive,
 	}
-	s.persist()
+	s.records = append(s.records, rec)
+	s.activeID = id
+	s.persistLocked()
+	return *rec, nil
+}
+
+// Stop ends the active session, terminating the local process if applicable.
+func (s *Session) Stop() error {
+	s.mu.Lock()
+	r := s.recordLocked(s.activeID)
+	isLocal := r != nil && r.Mode == ModeLocal
+	s.mu.Unlock()
+
+	if isLocal {
+		_ = s.proc.Stop()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r := s.recordLocked(s.activeID); r != nil {
+		finalize(r, deriveStatus(r, nil))
+		s.activeID = ""
+		s.persistLocked()
+	}
 	return nil
 }
 
-// Stop ends the session, terminating the local process when applicable.
-func (s *Session) Stop() error {
+// UpdateProgress records the latest observed mongosync state, the progress
+// summary, and (for remote sessions) the source/destination discovered from
+// the progress response.
+func (s *Session) UpdateProgress(state, source, destination string, snap Summary) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	var err error
-	if s.state.Mode == ModeLocal {
-		err = s.proc.Stop()
+	r := s.recordLocked(s.activeID)
+	if r == nil {
+		return
 	}
-	s.state = State{Mode: ModeNone}
-	_ = os.Remove(s.statePath())
-	return err
+	changed := false
+	if state != "" && state != r.LastState {
+		r.LastState = state
+		changed = true
+	}
+	if r.Source == "" && source != "" {
+		r.Source = source
+		changed = true
+	}
+	if r.Destination == "" && destination != "" {
+		r.Destination = destination
+		changed = true
+	}
+	if r.Summary == nil {
+		r.Summary = &Summary{}
+	}
+	if mergeSummary(r.Summary, snap) {
+		changed = true
+	}
+	if changed {
+		s.persistLocked()
+	}
+}
+
+// mergeSummary folds a fresh snapshot into dst, keeping the largest value of
+// each metric. It reports whether anything changed.
+func mergeSummary(dst *Summary, snap Summary) bool {
+	changed := false
+	if snap.Phase != "" && snap.Phase != dst.Phase {
+		dst.Phase = snap.Phase
+		changed = true
+	}
+	maxI64 := func(d *int64, v int64) {
+		if v > *d {
+			*d, changed = v, true
+		}
+	}
+	maxInt := func(d *int, v int) {
+		if v > *d {
+			*d, changed = v, true
+		}
+	}
+	maxI64(&dst.CopiedBytes, snap.CopiedBytes)
+	maxI64(&dst.TotalBytes, snap.TotalBytes)
+	maxI64(&dst.EventsApplied, snap.EventsApplied)
+	maxInt(&dst.IndexesBuilt, snap.IndexesBuilt)
+	maxInt(&dst.TotalIndexes, snap.TotalIndexes)
+	maxI64(&dst.VerifiedDocuments, snap.VerifiedDocuments)
+	maxI64(&dst.EstimatedDocuments, snap.EstimatedDocuments)
+	maxInt(&dst.VerifiedCollections, snap.VerifiedCollections)
+	maxInt(&dst.TotalCollections, snap.TotalCollections)
+	return changed
+}
+
+// InitializingHint explains the active session's INITIALIZING state from its
+// log. It returns a message and whether the situation indicates a problem.
+func (s *Session) InitializingHint() (string, bool) {
+	s.mu.Lock()
+	id := s.activeID
+	s.mu.Unlock()
+	if id == "" {
+		return "", false
+	}
+	return initHintFromLog(s.MongosyncLogPath(id))
+}
+
+// newID returns a unique, sortable session id.
+func newID() string {
+	return strconv.FormatInt(time.Now().UnixMilli(), 10)
 }
 
 // normalizeURL ensures the URL has a scheme and host.
@@ -352,14 +487,35 @@ func normalizeURL(raw string) string {
 	return strings.TrimRight(raw, "/")
 }
 
-// writeConfigYAML emits a minimal mongosync configuration file. The file holds
-// connection strings with credentials, so it is written with 0600 permissions.
-func writeConfigYAML(path string, cfg MigrationConfig, logsDir string) error {
+// redactURI masks the password in a MongoDB connection string for display,
+// leaving the rest of the string byte-for-byte intact.
+func redactURI(raw string) string {
+	raw = strings.TrimSpace(raw)
+	scheme := strings.Index(raw, "://")
+	if scheme < 0 {
+		return raw
+	}
+	rest := raw[scheme+3:]
+	at := strings.Index(rest, "@")
+	if at < 0 {
+		return raw // no userinfo
+	}
+	userinfo := rest[:at]
+	colon := strings.Index(userinfo, ":")
+	if colon < 0 {
+		return raw // username only, no password
+	}
+	return raw[:scheme+3] + userinfo[:colon] + ":***" + rest[at:]
+}
+
+// writeConfigYAML emits a minimal mongosync configuration file. It holds
+// connection strings with credentials, so it is written 0600.
+func writeConfigYAML(path string, cfg MigrationConfig, logDir string) error {
 	var b strings.Builder
 	b.WriteString("# Generated by mongosync-ui — do not edit while a session is running.\n")
 	b.WriteString("cluster0: " + yamlString(cfg.SourceURI) + "\n")
 	b.WriteString("cluster1: " + yamlString(cfg.DestinationURI) + "\n")
-	b.WriteString("logPath: " + yamlString(logsDir) + "\n")
+	b.WriteString("logPath: " + yamlString(logDir) + "\n")
 	b.WriteString("port: " + strconv.Itoa(cfg.Port) + "\n")
 	return os.WriteFile(path, []byte(b.String()), 0o600)
 }

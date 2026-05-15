@@ -23,6 +23,8 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// --- binary ---------------------------------------------------------------
+
 func (s *Server) handleBinaryStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.bin.Status())
 }
@@ -45,45 +47,60 @@ func (s *Server) handleBinaryInstall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, s.bin.Status())
 }
 
-// sessionView is the combined session + binary state sent to the UI.
-type sessionView struct {
-	Mode            string                  `json:"mode"`
-	APIBaseURL      string                  `json:"apiBaseUrl,omitempty"`
-	PID             int                     `json:"pid,omitempty"`
-	Running         bool                    `json:"running"`
-	StartedAt       string                  `json:"startedAt,omitempty"`
-	Config          session.MigrationConfig `json:"config"`
-	Binary          binary.Status           `json:"binary"`
-	ProcessExited   bool                    `json:"processExited"`
-	ExitReason      string                  `json:"exitReason,omitempty"`
-	InitHint        string                  `json:"initHint,omitempty"`
-	InitHintProblem bool                    `json:"initHintProblem,omitempty"`
+// --- sessions registry ----------------------------------------------------
+
+func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"records": s.sess.Records()})
+}
+
+func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
+	rec, ok := s.sess.Record(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
+}
+
+func (s *Server) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.sess.Record(id); !ok {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	limit := parseLines(r, 400)
+	lines := tailFile(s.sess.MongosyncLogPath(id), limit)
+	if len(lines) == 0 {
+		lines = tailFile(s.sess.ProcLogPath(id), limit)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"available": true, "lines": lines})
+}
+
+// --- active session -------------------------------------------------------
+
+// activeView is the active session enriched with live, non-persisted detail.
+type activeView struct {
+	Record          session.Record `json:"record"`
+	InitHint        string         `json:"initHint,omitempty"`
+	InitHintProblem bool           `json:"initHintProblem,omitempty"`
+}
+
+// sessionResponse is returned by GET /api/session.
+type sessionResponse struct {
+	Active *activeView   `json:"active"`
+	Binary binary.Status `json:"binary"`
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
-	st := s.sess.Snapshot()
-	running := s.sess.Running()
-	view := sessionView{
-		Mode:       st.Mode,
-		APIBaseURL: st.APIBaseURL,
-		PID:        st.PID,
-		Running:    running,
-		StartedAt:  st.StartedAt,
-		Config:     st.Config,
-		Binary:     s.bin.Status(),
+	resp := sessionResponse{Binary: s.bin.Status()}
+	if rec, ok := s.sess.Active(); ok {
+		av := &activeView{Record: rec}
+		if rec.Mode == session.ModeLocal {
+			av.InitHint, av.InitHintProblem = s.sess.InitializingHint()
+		}
+		resp.Active = av
 	}
-	// A local session whose process is no longer running has crashed or been
-	// terminated externally; surface the reason so the UI can explain it.
-	if st.Mode == session.ModeLocal && !running {
-		view.ProcessExited = true
-		view.ExitReason = s.sess.LastMongosyncError()
-	}
-	// While a local mongosync is running, explain a prolonged INITIALIZING
-	// state from the log (connection retries, resume-from-restart wait, …).
-	if st.Mode == session.ModeLocal && running {
-		view.InitHint, view.InitHintProblem = s.sess.InitializingHint()
-	}
-	writeJSON(w, http.StatusOK, view)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleStartLocal(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +109,7 @@ func (s *Server) handleStartLocal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := s.sess.StartLocal(cfg); err != nil {
+	if _, err := s.sess.StartLocal(cfg); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -107,7 +124,7 @@ func (s *Server) handleAttachRemote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := s.sess.AttachRemote(body.URL); err != nil {
+	if _, err := s.sess.AttachRemote(body.URL); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -121,6 +138,8 @@ func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 	}
 	s.handleSession(w, r)
 }
+
+// --- mongosync control proxy ---------------------------------------------
 
 // relay forwards a mongosync client response to the HTTP response writer.
 func relay(w http.ResponseWriter, resp *client.Response, err error) {
@@ -140,6 +159,56 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, err := c.Progress(r.Context())
+	if err == nil && resp != nil {
+		// Peek at the progress to keep the session record current.
+		var pr struct {
+			Progress struct {
+				State              string `json:"state"`
+				Info               string `json:"info"`
+				TotalEventsApplied int64  `json:"totalEventsApplied"`
+				CollectionCopy     struct {
+					EstimatedTotalBytes  int64 `json:"estimatedTotalBytes"`
+					EstimatedCopiedBytes int64 `json:"estimatedCopiedBytes"`
+				} `json:"collectionCopy"`
+				IndexBuilding struct {
+					IndexesBuilt        int `json:"indexesBuilt"`
+					TotalIndexesToBuild int `json:"totalIndexesToBuild"`
+				} `json:"indexBuilding"`
+				Verification struct {
+					Destination struct {
+						EstimatedDocumentCount int64 `json:"estimatedDocumentCount"`
+						HashedDocumentCount    int64 `json:"hashedDocumentCount"`
+						TotalCollectionCount   int   `json:"totalCollectionCount"`
+						ScannedCollectionCount int   `json:"scannedCollectionCount"`
+					} `json:"destination"`
+				} `json:"verification"`
+				DirectionMapping struct {
+					Source      string `json:"Source"`
+					Destination string `json:"Destination"`
+				} `json:"directionMapping"`
+			} `json:"progress"`
+		}
+		if json.Unmarshal(resp.Body, &pr) == nil {
+			p := pr.Progress
+			s.sess.UpdateProgress(
+				p.State,
+				p.DirectionMapping.Source,
+				p.DirectionMapping.Destination,
+				session.Summary{
+					Phase:               p.Info,
+					CopiedBytes:         p.CollectionCopy.EstimatedCopiedBytes,
+					TotalBytes:          p.CollectionCopy.EstimatedTotalBytes,
+					EventsApplied:       p.TotalEventsApplied,
+					IndexesBuilt:        p.IndexBuilding.IndexesBuilt,
+					TotalIndexes:        p.IndexBuilding.TotalIndexesToBuild,
+					VerifiedDocuments:   p.Verification.Destination.HashedDocumentCount,
+					EstimatedDocuments:  p.Verification.Destination.EstimatedDocumentCount,
+					VerifiedCollections: p.Verification.Destination.ScannedCollectionCount,
+					TotalCollections:    p.Verification.Destination.TotalCollectionCount,
+				},
+			)
+		}
+	}
 	relay(w, resp, err)
 }
 
@@ -191,24 +260,16 @@ func (s *Server) handleAction(action string) http.HandlerFunc {
 	}
 }
 
-// handleLogs returns the tail of the mongosync log (local sessions only).
-func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	st := s.sess.Snapshot()
-	if st.Mode != session.ModeLocal {
-		writeJSON(w, http.StatusOK, map[string]any{"available": false, "lines": []string{}})
-		return
-	}
-	limit := 400
+// --- helpers --------------------------------------------------------------
+
+// parseLines reads a bounded ?lines= query parameter.
+func parseLines(r *http.Request, def int) int {
 	if q := r.URL.Query().Get("lines"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= 5000 {
-			limit = n
+			return n
 		}
 	}
-	lines := tailFile(s.sess.MongosyncLogPath(), limit)
-	if len(lines) == 0 {
-		lines = tailFile(s.sess.ProcLogPath(), limit)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"available": true, "lines": lines})
+	return def
 }
 
 // tailFile returns the last n lines of a file, or nil if it cannot be read.

@@ -30,6 +30,47 @@ export function formatLatency(ms?: number): string {
   return `${ms} ms`
 }
 
+// formatDateTime renders an ISO timestamp as a readable local date-time.
+export function formatDateTime(iso?: string): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '—'
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+// elapsedSeconds returns the seconds between start and end (or now).
+export function elapsedSeconds(startIso?: string, endIso?: string): number {
+  if (!startIso) return 0
+  const start = new Date(startIso).getTime()
+  if (isNaN(start)) return 0
+  const end = endIso ? new Date(endIso).getTime() : Date.now()
+  return Math.max(0, (end - start) / 1000)
+}
+
+type StatusColor = 'gray' | 'green' | 'blue' | 'yellow' | 'red'
+
+// sessionStatusColor maps a session status onto a badge color.
+export function sessionStatusColor(status?: string): StatusColor {
+  switch (status) {
+    case 'active':
+      return 'green'
+    case 'committed':
+      return 'blue'
+    case 'failed':
+      return 'red'
+    case 'stopped':
+      return 'gray'
+    default:
+      return 'gray'
+  }
+}
+
 // stateBadgeColor maps a mongosync state onto a badge color.
 export function stateBadgeColor(
   state?: string,

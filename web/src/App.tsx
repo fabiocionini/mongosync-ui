@@ -1,23 +1,36 @@
-// App is the root component: it tracks the session state and routes between
-// the setup wizard and the live migration monitor.
+// App is the root component. It tracks the session registry and the active
+// session, and routes between the sessions list, setup wizard, live monitor
+// and historical session details.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { MonitorView } from './components/MonitorView'
 import { SetupView } from './components/SetupView'
+import { SessionsView } from './components/SessionsView'
+import { SessionDetailsView } from './components/SessionDetailsView'
 import { Badge, Banner, Spinner } from './components/ui'
 import { LeafLogo } from './components/icons'
-import type { SessionView } from './types'
+import type { SessionRecord, SessionResponse } from './types'
+
+type View =
+  | { name: 'sessions' }
+  | { name: 'setup' }
+  | { name: 'monitor' }
+  | { name: 'details'; id: string }
 
 export default function App() {
-  const [session, setSession] = useState<SessionView | null>(null)
+  const [session, setSession] = useState<SessionResponse | null>(null)
+  const [records, setRecords] = useState<SessionRecord[]>([])
+  const [view, setView] = useState<View>({ name: 'sessions' })
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
+  const monitoredId = useRef<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
-      const s = await api.getSession()
+      const [s, list] = await Promise.all([api.getSession(), api.sessions()])
       setSession(s)
+      setRecords(list.records)
       setError('')
     } catch (e: any) {
       setError(String(e.message || e))
@@ -32,29 +45,57 @@ export default function App() {
     return () => clearInterval(id)
   }, [refresh])
 
-  const active = session && session.mode !== 'none'
+  const active = session?.active ?? null
+
+  // When the monitored session ends, slide into its details view.
+  useEffect(() => {
+    if (view.name !== 'monitor') return
+    if (active) {
+      monitoredId.current = active.record.id
+    } else if (loaded && session) {
+      setView(
+        monitoredId.current
+          ? { name: 'details', id: monitoredId.current }
+          : { name: 'sessions' },
+      )
+    }
+  }, [view, active, loaded, session])
+
+  function openRecord(rec: SessionRecord) {
+    if (rec.status === 'active') {
+      monitoredId.current = rec.id
+      setView({ name: 'monitor' })
+    } else {
+      setView({ name: 'details', id: rec.id })
+    }
+  }
 
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">
+        <div
+          className="brand"
+          onClick={() => setView({ name: 'sessions' })}
+          style={{ cursor: 'pointer' }}
+        >
           <LeafLogo />
           <span>
             mongosync <span className="sub">UI</span>
           </span>
         </div>
         <div className="spacer" />
-        {session && (
-          <div className="topinfo">
-            {active ? (
-              <Badge color={session.mode === 'local' ? 'green' : 'blue'} dot>
-                {session.mode === 'local' ? 'Local session' : 'Remote session'}
-              </Badge>
-            ) : (
-              <Badge color="gray">No active session</Badge>
-            )}
-          </div>
-        )}
+        {session &&
+          (active ? (
+            <Badge
+              color={active.record.mode === 'local' ? 'green' : 'blue'}
+              dot
+            >
+              {active.record.mode === 'local' ? 'Local' : 'Remote'} session
+              active
+            </Badge>
+          ) : (
+            <Badge color="gray">No active session</Badge>
+          ))}
       </header>
 
       <main className="main">
@@ -70,12 +111,41 @@ export default function App() {
           </Banner>
         )}
 
-        {loaded && session && !active && (
-          <SetupView session={session} onChanged={refresh} />
+        {loaded && session && view.name === 'sessions' && (
+          <SessionsView
+            records={records}
+            active={active}
+            onNew={() => setView({ name: 'setup' })}
+            onOpen={openRecord}
+          />
         )}
 
-        {loaded && session && active && (
-          <MonitorView session={session} onChanged={refresh} />
+        {loaded && session && view.name === 'setup' && (
+          <SetupView
+            binary={session.binary}
+            hasActive={!!active}
+            onChanged={refresh}
+            onStarted={async () => {
+              await refresh()
+              setView({ name: 'monitor' })
+            }}
+            onBack={() => setView({ name: 'sessions' })}
+          />
+        )}
+
+        {loaded && session && view.name === 'monitor' && active && (
+          <MonitorView
+            active={active}
+            onChanged={refresh}
+            onBack={() => setView({ name: 'sessions' })}
+          />
+        )}
+
+        {loaded && view.name === 'details' && (
+          <SessionDetailsView
+            id={view.id}
+            onBack={() => setView({ name: 'sessions' })}
+          />
         )}
       </main>
     </div>

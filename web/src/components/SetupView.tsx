@@ -1,27 +1,46 @@
-// SetupView is the first screen: choose between launching a local mongosync
-// or attaching to an already-running remote instance.
+// SetupView starts a new migration: launch a local mongosync, or attach to an
+// already-running remote instance.
 
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import type { SessionView } from '../types'
+import type { BinaryStatus } from '../types'
 import { Badge, Banner, Button, Card, Field, ProgressBar } from './ui'
 
 export function SetupView({
-  session,
+  binary,
+  hasActive,
   onChanged,
+  onStarted,
+  onBack,
 }: {
-  session: SessionView
+  binary: BinaryStatus
+  hasActive: boolean
   onChanged: () => void
+  onStarted: () => void
+  onBack: () => void
 }) {
   const [tab, setTab] = useState<'local' | 'remote'>('local')
 
   return (
     <div>
-      <h1 className="page-title">Set up a migration</h1>
+      <Button small onClick={onBack}>
+        ← All sessions
+      </Button>
+      <h1 className="page-title" style={{ marginTop: 12 }}>
+        New migration
+      </h1>
       <p className="page-subtitle">
         Run a managed mongosync on this machine, or connect to one already
         running elsewhere.
       </p>
+
+      {hasActive && (
+        <div style={{ marginBottom: 16 }}>
+          <Banner variant="warning">
+            A migration is already active. Stop it before starting another.
+          </Banner>
+        </div>
+      )}
 
       <div className="tabs">
         <button
@@ -39,29 +58,33 @@ export function SetupView({
       </div>
 
       {tab === 'local' ? (
-        <LocalSetup session={session} onChanged={onChanged} />
+        <LocalSetup
+          binary={binary}
+          disabled={hasActive}
+          onChanged={onChanged}
+          onStarted={onStarted}
+        />
       ) : (
-        <RemoteSetup onChanged={onChanged} />
+        <RemoteSetup disabled={hasActive} onStarted={onStarted} />
       )}
     </div>
   )
 }
 
 function BinarySection({
-  session,
+  binary,
   onChanged,
 }: {
-  session: SessionView
+  binary: BinaryStatus
   onChanged: () => void
 }) {
-  const bin = session.binary
   const [versions, setVersions] = useState<string[]>([])
   const [selected, setSelected] = useState('')
   const [loadingVersions, setLoadingVersions] = useState(false)
   const [err, setErr] = useState('')
 
   useEffect(() => {
-    if (bin.state === 'installed') return
+    if (binary.state === 'installed') return
     setLoadingVersions(true)
     api
       .binaryVersions()
@@ -71,7 +94,7 @@ function BinarySection({
       })
       .catch((e) => setErr(String(e.message || e)))
       .finally(() => setLoadingVersions(false))
-  }, [bin.state])
+  }, [binary.state])
 
   async function install() {
     setErr('')
@@ -83,29 +106,35 @@ function BinarySection({
     }
   }
 
-  if (bin.state === 'installed') {
+  if (binary.state === 'installed') {
     return (
       <Banner variant="success">
-        mongosync <b>{bin.version}</b> is installed and ready.
+        mongosync <b>{binary.version}</b> is installed and ready.
       </Banner>
     )
   }
 
-  if (bin.state === 'downloading' || bin.state === 'extracting') {
+  if (binary.state === 'downloading' || binary.state === 'extracting') {
     return (
       <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            marginBottom: 8,
+          }}
+        >
           <span>
-            {bin.state === 'downloading' ? 'Downloading' : 'Extracting'} mongosync{' '}
-            {bin.version}…
+            {binary.state === 'downloading' ? 'Downloading' : 'Extracting'}{' '}
+            mongosync {binary.version}…
           </span>
           <span className="muted">
-            {bin.state === 'downloading' ? `${bin.progress}%` : ''}
+            {binary.state === 'downloading' ? `${binary.progress}%` : ''}
           </span>
         </div>
         <ProgressBar
-          value={bin.progress}
-          indeterminate={bin.state === 'extracting'}
+          value={binary.progress}
+          indeterminate={binary.state === 'extracting'}
         />
       </div>
     )
@@ -117,9 +146,9 @@ function BinarySection({
         The official mongosync binary is downloaded from MongoDB and stored
         inside this tool's working directory.
       </p>
-      {bin.state === 'error' && bin.error && (
+      {binary.state === 'error' && binary.error && (
         <div style={{ marginBottom: 12 }}>
-          <Banner variant="danger">Install failed: {bin.error}</Banner>
+          <Banner variant="danger">Install failed: {binary.error}</Banner>
         </div>
       )}
       {err && (
@@ -157,11 +186,15 @@ function BinarySection({
 }
 
 function LocalSetup({
-  session,
+  binary,
+  disabled,
   onChanged,
+  onStarted,
 }: {
-  session: SessionView
+  binary: BinaryStatus
+  disabled: boolean
   onChanged: () => void
+  onStarted: () => void
 }) {
   const [sourceUri, setSourceUri] = useState('')
   const [destinationUri, setDestinationUri] = useState('')
@@ -169,7 +202,7 @@ function LocalSetup({
   const [submitting, setSubmitting] = useState(false)
   const [err, setErr] = useState('')
 
-  const binaryReady = session.binary.state === 'installed'
+  const binaryReady = binary.state === 'installed'
 
   async function start() {
     setErr('')
@@ -179,9 +212,9 @@ function LocalSetup({
         sourceUri: sourceUri.trim(),
         destinationUri: destinationUri.trim(),
         port,
-        version: session.binary.version ?? '',
+        version: binary.version ?? '',
       })
-      onChanged()
+      onStarted()
     } catch (e: any) {
       setErr(String(e.message || e))
     } finally {
@@ -192,7 +225,7 @@ function LocalSetup({
   return (
     <div className="stack">
       <Card title="mongosync binary">
-        <BinarySection session={session} onChanged={onChanged} />
+        <BinarySection binary={binary} onChanged={onChanged} />
       </Card>
 
       <Card
@@ -250,7 +283,12 @@ function LocalSetup({
           variant="primary"
           onClick={start}
           loading={submitting}
-          disabled={!binaryReady || !sourceUri.trim() || !destinationUri.trim()}
+          disabled={
+            disabled ||
+            !binaryReady ||
+            !sourceUri.trim() ||
+            !destinationUri.trim()
+          }
         >
           Launch mongosync
         </Button>
@@ -259,7 +297,13 @@ function LocalSetup({
   )
 }
 
-function RemoteSetup({ onChanged }: { onChanged: () => void }) {
+function RemoteSetup({
+  disabled,
+  onStarted,
+}: {
+  disabled: boolean
+  onStarted: () => void
+}) {
   const [url, setUrl] = useState('http://localhost:27182')
   const [submitting, setSubmitting] = useState(false)
   const [err, setErr] = useState('')
@@ -269,7 +313,7 @@ function RemoteSetup({ onChanged }: { onChanged: () => void }) {
     setSubmitting(true)
     try {
       await api.attachRemote(url.trim())
-      onChanged()
+      onStarted()
     } catch (e: any) {
       setErr(String(e.message || e))
     } finally {
@@ -310,7 +354,7 @@ function RemoteSetup({ onChanged }: { onChanged: () => void }) {
           variant="primary"
           onClick={attach}
           loading={submitting}
-          disabled={!url.trim()}
+          disabled={disabled || !url.trim()}
         >
           Attach
         </Button>
