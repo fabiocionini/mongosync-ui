@@ -31,7 +31,7 @@ func main() {
 		open    bool
 	)
 	flag.IntVar(&port, "port", 8080, "port for the mongosync-ui web interface")
-	flag.StringVar(&workdir, "workdir", defaultWorkdir(), "directory for the mongosync binary, config, logs and state")
+	flag.StringVar(&workdir, "workdir", defaultWorkdir(), "directory for the mongosync binary and session data")
 	flag.BoolVar(&open, "open", true, "open the UI in a browser on startup")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
@@ -41,7 +41,7 @@ func main() {
 		return
 	}
 
-	for _, dir := range []string{"bin", "config", "logs"} {
+	for _, dir := range []string{"bin", "sessions"} {
 		if err := os.MkdirAll(filepath.Join(workdir, dir), 0o755); err != nil {
 			log.Fatalf("create working directory: %v", err)
 		}
