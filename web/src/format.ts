@@ -30,6 +30,15 @@ export function formatLatency(ms?: number): string {
   return `${ms} ms`
 }
 
+// formatRatio renders "done / total". The total is widened so it is never
+// smaller than done — mongosync's estimated counts can briefly be overtaken
+// by the live hashed/scanned counts during change event application.
+export function formatRatio(done?: number, total?: number): string {
+  const widened =
+    total === undefined ? done : Math.max(total, done ?? 0)
+  return `${formatNumber(done)} / ${formatNumber(widened)}`
+}
+
 // formatDateTime renders an ISO timestamp as a readable local date-time.
 export function formatDateTime(iso?: string): string {
   if (!iso) return '—'

@@ -99,12 +99,14 @@ func (s *Server) spaHandler() http.HandlerFunc {
 	}
 }
 
-// logMiddleware logs each request with its latency.
+// logMiddleware logs mutating API requests. Read-only GET endpoints are
+// skipped — the UI polls them every couple of seconds, which would otherwise
+// flood the log with noise.
 func logMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		if r.Method != http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/") {
 			log.Printf("%s %s (%s)", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
 		}
 	})

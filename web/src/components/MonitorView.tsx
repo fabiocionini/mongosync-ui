@@ -8,6 +8,7 @@ import {
   formatDuration,
   formatLatency,
   formatNumber,
+  formatRatio,
   stateBadgeColor,
 } from '../format'
 import type {
@@ -591,15 +592,19 @@ function VerificationCard({ progress }: { progress: Progress }) {
             <div className="kv">
               <span className="k">Collections scanned</span>
               <span className="v">
-                {formatNumber(data?.scannedCollectionCount)} /{' '}
-                {formatNumber(data?.totalCollectionCount)}
+                {formatRatio(
+                  data?.scannedCollectionCount,
+                  data?.totalCollectionCount,
+                )}
               </span>
             </div>
             <div className="kv">
               <span className="k">Documents hashed</span>
               <span className="v">
-                {formatNumber(data?.hashedDocumentCount)} /{' '}
-                {formatNumber(data?.estimatedDocumentCount)}
+                {formatRatio(
+                  data?.hashedDocumentCount,
+                  data?.estimatedDocumentCount,
+                )}
               </span>
             </div>
             <div className="kv">

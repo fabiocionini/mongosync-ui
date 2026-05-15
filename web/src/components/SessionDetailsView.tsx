@@ -9,6 +9,7 @@ import {
   formatDateTime,
   formatDuration,
   formatNumber,
+  formatRatio,
   sessionStatusColor,
 } from '../format'
 import type { SessionRecord } from '../types'
@@ -190,15 +191,13 @@ function MigrationSummary({ rec }: { rec: SessionRecord }) {
       <div className="kv">
         <span className="k">Documents verified</span>
         <span className="v">
-          {formatNumber(s.verifiedDocuments)} /{' '}
-          {formatNumber(s.estimatedDocuments)}
+          {formatRatio(s.verifiedDocuments, s.estimatedDocuments)}
         </span>
       </div>
       <div className="kv">
         <span className="k">Collections verified</span>
         <span className="v">
-          {formatNumber(s.verifiedCollections)} /{' '}
-          {formatNumber(s.totalCollections)}
+          {formatRatio(s.verifiedCollections, s.totalCollections)}
         </span>
       </div>
       <div className="kv">
