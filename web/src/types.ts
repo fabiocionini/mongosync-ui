@@ -34,6 +34,8 @@ export interface SessionView {
   binary: BinaryStatus
   processExited?: boolean
   exitReason?: string
+  initHint?: string
+  initHintProblem?: boolean
 }
 
 export interface VerificationPhase {

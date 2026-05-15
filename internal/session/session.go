@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -71,7 +72,7 @@ func New(workdir string, bin *binary.Manager) *Session {
 	return s
 }
 
-func (s *Session) configDir() string  { return filepath.Join(s.workdir, "config") }
+func (s *Session) configDir() string   { return filepath.Join(s.workdir, "config") }
 func (s *Session) logsDir() string     { return filepath.Join(s.workdir, "logs") }
 func (s *Session) configPath() string  { return filepath.Join(s.configDir(), "mongosync.yaml") }
 func (s *Session) procLogPath() string { return filepath.Join(s.logsDir(), "process.log") }
@@ -118,6 +119,63 @@ func (s *Session) LastMongosyncError() string {
 		}
 	}
 	return ""
+}
+
+// InitializingHint inspects the mongosync log to explain why mongosync is in
+// the INITIALIZING state. It returns a human-readable message and whether the
+// situation indicates a problem (true) rather than expected progress (false).
+// This turns a prolonged INITIALIZING state into a concrete, evidence-based
+// diagnosis instead of a time-based guess.
+func (s *Session) InitializingHint() (message string, problem bool) {
+	f, err := os.Open(s.MongosyncLogPath())
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", false
+	}
+	// Only the tail of the log is relevant; bound the read.
+	const window = 64 * 1024
+	if info.Size() > window {
+		if _, err := f.Seek(info.Size()-window, io.SeekStart); err != nil {
+			return "", false
+		}
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return "", false
+	}
+	lines := strings.Split(string(data), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		switch {
+		case strings.Contains(line, "transient error"):
+			var e struct {
+				OperationDescription string `json:"operationDescription"`
+				HandledError         struct {
+					Message string `json:"message"`
+				} `json:"handledError"`
+			}
+			if json.Unmarshal([]byte(line), &e) != nil {
+				continue
+			}
+			if e.OperationDescription != "" {
+				return e.OperationDescription, true
+			}
+			return e.HandledError.Message, true
+		case strings.Contains(line, "restarted mongosync after a pause or crash"):
+			return "mongosync found state from a previous run on the destination " +
+				"cluster and is resuming it. It waits up to ~2 minutes before it " +
+				"accepts a new migration. To run a fresh migration, stop this " +
+				"session and point it at clean clusters.", false
+		}
+	}
+	return "", false
 }
 
 // restore loads state.json. A previously local session whose process is no

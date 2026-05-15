@@ -47,15 +47,17 @@ func (s *Server) handleBinaryInstall(w http.ResponseWriter, r *http.Request) {
 
 // sessionView is the combined session + binary state sent to the UI.
 type sessionView struct {
-	Mode          string                  `json:"mode"`
-	APIBaseURL    string                  `json:"apiBaseUrl,omitempty"`
-	PID           int                     `json:"pid,omitempty"`
-	Running       bool                    `json:"running"`
-	StartedAt     string                  `json:"startedAt,omitempty"`
-	Config        session.MigrationConfig `json:"config"`
-	Binary        binary.Status           `json:"binary"`
-	ProcessExited bool                    `json:"processExited"`
-	ExitReason    string                  `json:"exitReason,omitempty"`
+	Mode            string                  `json:"mode"`
+	APIBaseURL      string                  `json:"apiBaseUrl,omitempty"`
+	PID             int                     `json:"pid,omitempty"`
+	Running         bool                    `json:"running"`
+	StartedAt       string                  `json:"startedAt,omitempty"`
+	Config          session.MigrationConfig `json:"config"`
+	Binary          binary.Status           `json:"binary"`
+	ProcessExited   bool                    `json:"processExited"`
+	ExitReason      string                  `json:"exitReason,omitempty"`
+	InitHint        string                  `json:"initHint,omitempty"`
+	InitHintProblem bool                    `json:"initHintProblem,omitempty"`
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +77,11 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	if st.Mode == session.ModeLocal && !running {
 		view.ProcessExited = true
 		view.ExitReason = s.sess.LastMongosyncError()
+	}
+	// While a local mongosync is running, explain a prolonged INITIALIZING
+	// state from the log (connection retries, resume-from-restart wait, …).
+	if st.Mode == session.ModeLocal && running {
+		view.InitHint, view.InitHintProblem = s.sess.InitializingHint()
 	}
 	writeJSON(w, http.StatusOK, view)
 }

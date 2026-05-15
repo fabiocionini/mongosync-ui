@@ -288,11 +288,11 @@ func (m *Manager) fetchArchive(dl download, version string, dst *os.File) error 
 
 // progressReader counts bytes and emits coarse progress updates.
 type progressReader struct {
-	reader   io.Reader
-	total    int64
-	read     int64
-	lastPct  int
-	report   func(int)
+	reader  io.Reader
+	total   int64
+	read    int64
+	lastPct int
+	report  func(int)
 }
 
 func (p *progressReader) Read(b []byte) (int, error) {

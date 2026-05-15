@@ -50,16 +50,6 @@ export function MonitorView({
   const progress: Progress | undefined = resp?.progress
   const state = (progress?.state || '').toUpperCase()
 
-  // Track how long mongosync has been INITIALIZING so a stuck connection can
-  // be flagged — connection failures only appear in the log, not in progress.
-  const [initSince, setInitSince] = useState<number | null>(null)
-  useEffect(() => {
-    setInitSince((prev) =>
-      state === 'INITIALIZING' ? (prev ?? Date.now()) : null,
-    )
-  }, [state])
-  const initStuck = initSince !== null && Date.now() - initSince > 30000
-
   async function runAction(
     name: string,
     fn: () => Promise<unknown>,
@@ -146,13 +136,25 @@ export function MonitorView({
           </Banner>
         )}
 
-        {state === 'INITIALIZING' && (
-          <Banner variant={initStuck ? 'warning' : 'info'}>
-            {initStuck
-              ? 'mongosync has been initializing for over 30 seconds. It is most likely unable to reach the source or destination cluster — confirm both connection strings point to reachable replica sets, then check the logs below.'
-              : 'mongosync is starting up and connecting to the source and destination clusters…'}
-          </Banner>
-        )}
+        {state === 'INITIALIZING' &&
+          (session.initHint ? (
+            <Banner variant={session.initHintProblem ? 'warning' : 'info'}>
+              {session.initHintProblem ? (
+                <>
+                  mongosync cannot reach a cluster yet. Latest attempt:{' '}
+                  {session.initHint} Confirm both connection strings point to
+                  reachable replica sets, then check the logs below.
+                </>
+              ) : (
+                session.initHint
+              )}
+            </Banner>
+          ) : (
+            <Banner variant="info">
+              mongosync is starting up and connecting to the source and
+              destination clusters…
+            </Banner>
+          ))}
 
         {!resp && !pollError && (
           <Card>
@@ -190,7 +192,10 @@ export function MonitorView({
 
         {session.mode === 'local' && (
           <LogsCard
-            defaultOpen={state === 'INITIALIZING' || !!session.processExited}
+            defaultOpen={
+              (!!session.initHint && !!session.initHintProblem) ||
+              !!session.processExited
+            }
           />
         )}
       </div>
@@ -401,16 +406,17 @@ function StartPanel({
   )
 }
 
-// sourceWritesBlocked reports whether mongosync is blocking user writes on the
-// source cluster. mongosync does this once it enters the commit/cutover phase;
-// there is no dedicated field, so it is derived from the progress "info" value
-// (and corroborated by any write-blocking warning).
+// sourceWritesBlocked reports whether mongosync is currently blocking user
+// writes on the source cluster. Source writes are allowed during collection
+// copy and change event application, blocked only while a commit is in
+// progress ("waiting for commit to complete"), and released again once the
+// commit finishes ("commit completed"). There is no dedicated field, so this
+// is derived from the progress "info" value.
+//
+// Note: a standing advisory warning ("Mongosync will block writes ... during
+// /commit") is always present and must NOT be treated as a blocked signal.
 function sourceWritesBlocked(progress: Progress): boolean {
-  const info = (progress.info || '').toLowerCase()
-  if (info.includes('commit')) return true
-  return (progress.warnings || []).some(
-    (w) => /source/i.test(w) && /(write|block)/i.test(w),
-  )
+  return (progress.info || '').toLowerCase().includes('waiting for commit')
 }
 
 function ProgressSection({ progress }: { progress: Progress }) {
