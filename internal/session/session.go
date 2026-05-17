@@ -67,6 +67,10 @@ type Record struct {
 	LastState        string     `json:"lastState,omitempty"` // last observed mongosync state
 	Outcome          string     `json:"outcome,omitempty"`   // failure reason, if any
 	Summary          *Summary   `json:"summary,omitempty"`   // peak observed progress
+	// Reversible records whether the migration was started with the
+	// reversible option. nil means unknown (e.g. an attached remote session
+	// the UI did not start).
+	Reversible *bool `json:"reversible,omitempty"`
 }
 
 // Summary is a snapshot of a migration's measurable progress. Each field holds
@@ -465,6 +469,18 @@ func mergeSummary(dst *Summary, snap Summary) bool {
 	maxInt(&dst.VerifiedCollections, snap.VerifiedCollections)
 	maxInt(&dst.TotalCollections, snap.TotalCollections)
 	return changed
+}
+
+// SetReversible records whether the active session was started reversible.
+func (s *Session) SetReversible(reversible bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.recordLocked(s.activeID)
+	if r == nil {
+		return
+	}
+	r.Reversible = &reversible
+	s.persistLocked()
 }
 
 // InitializingHint explains the active session's INITIALIZING state from its

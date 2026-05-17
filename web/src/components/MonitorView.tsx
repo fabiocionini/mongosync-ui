@@ -192,6 +192,7 @@ export function MonitorView({
           state={state}
           canCommit={!!progress?.canCommit}
           commitNote={commitNote}
+          reversible={active.record.reversible}
           busy={busy}
           onStart={(opts) => runAction('Start', () => api.start(opts))}
           onPause={() => runAction('Pause', api.pause)}
@@ -231,6 +232,7 @@ function ActionBar({
   state,
   canCommit,
   commitNote,
+  reversible,
   busy,
   onStart,
   onPause,
@@ -241,6 +243,7 @@ function ActionBar({
   state: string
   canCommit: boolean
   commitNote: string
+  reversible?: boolean
   busy: string | null
   onStart: (opts: StartOptions) => void
   onPause: () => void
@@ -288,7 +291,14 @@ function ActionBar({
         <Button
           onClick={onReverse}
           loading={busy === 'Reverse'}
-          disabled={state !== 'COMMITTED' || busy !== null}
+          disabled={
+            state !== 'COMMITTED' || busy !== null || reversible === false
+          }
+          title={
+            reversible === false
+              ? 'This migration was not started with the reversible option.'
+              : undefined
+          }
         >
           Reverse
         </Button>

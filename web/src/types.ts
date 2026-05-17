@@ -55,6 +55,7 @@ export interface SessionRecord {
   lastState?: string
   outcome?: string
   summary?: SessionSummary
+  reversible?: boolean
 }
 
 // ActiveView is the active session enriched with live detail.

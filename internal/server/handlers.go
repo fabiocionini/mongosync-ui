@@ -227,6 +227,11 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	if _, ok := body["destination"]; !ok {
 		body["destination"] = "cluster1"
 	}
+	// Remember whether the session was started reversible — mongosync does not
+	// report this, and the UI gates the Reverse control on it.
+	if rev, ok := body["reversible"].(bool); ok {
+		s.sess.SetReversible(rev)
+	}
 	resp, err := c.Start(r.Context(), body)
 	relay(w, resp, err)
 }
