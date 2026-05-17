@@ -54,6 +54,31 @@ export function MonitorView({
   const progress: Progress | undefined = resp?.progress
   const state = (progress?.state || '').toUpperCase()
 
+  // After the initial copy finishes, mongosync keeps the session RUNNING while
+  // the verifier catches up — and holds commit until it does. Surface that as a
+  // distinct "VERIFYING" status so a disabled Commit button is explained.
+  const copyDone =
+    !!progress?.info &&
+    !progress.info.toLowerCase().includes('collection copy')
+  const verifying =
+    !!progress?.verification &&
+    [
+      progress.verification.source?.phase,
+      progress.verification.destination?.phase,
+    ].some((ph) => !!ph && ph.toLowerCase() !== 'not started')
+  const awaitingVerification =
+    state === 'RUNNING' && copyDone && verifying && !progress?.canCommit
+  const displayState = awaitingVerification ? 'VERIFYING' : state
+
+  let commitNote = ''
+  if (state === 'RUNNING' && !progress?.canCommit) {
+    commitNote = awaitingVerification
+      ? 'The initial copy is complete. Commit stays disabled until verification finishes catching up.'
+      : copyDone
+        ? 'Commit becomes available once the destination has caught up.'
+        : 'Commit becomes available after the initial copy completes.'
+  }
+
   async function runAction(
     name: string,
     fn: () => Promise<unknown>,
@@ -100,8 +125,11 @@ export function MonitorView({
           <h1 className="page-title" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             Migration monitor
             {state && (
-              <Badge color={stateBadgeColor(state)} dot>
-                {state}
+              <Badge
+                color={awaitingVerification ? 'blue' : stateBadgeColor(state)}
+                dot
+              >
+                {displayState}
               </Badge>
             )}
           </h1>
@@ -163,6 +191,7 @@ export function MonitorView({
         <ActionBar
           state={state}
           canCommit={!!progress?.canCommit}
+          commitNote={commitNote}
           busy={busy}
           onStart={(opts) => runAction('Start', () => api.start(opts))}
           onPause={() => runAction('Pause', api.pause)}
@@ -201,6 +230,7 @@ export function MonitorView({
 function ActionBar({
   state,
   canCommit,
+  commitNote,
   busy,
   onStart,
   onPause,
@@ -210,6 +240,7 @@ function ActionBar({
 }: {
   state: string
   canCommit: boolean
+  commitNote: string
   busy: string | null
   onStart: (opts: StartOptions) => void
   onPause: () => void
@@ -271,6 +302,11 @@ function ActionBar({
         <p className="card-desc" style={{ marginTop: 12, marginBottom: 0 }}>
           mongosync is initializing — controls become available once it has
           connected to both clusters.
+        </p>
+      )}
+      {commitNote && (
+        <p className="card-desc" style={{ marginTop: 12, marginBottom: 0 }}>
+          {commitNote}
         </p>
       )}
       {isIdle && showStart && (
