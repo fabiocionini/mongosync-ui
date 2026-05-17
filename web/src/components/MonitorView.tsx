@@ -332,7 +332,7 @@ function StartPanel({
         checked={verification}
         onChange={setVerification}
         title="Enable verification"
-        description="Run mongosync's embedded data verifier during sync."
+        description="Run mongosync's embedded data verifier during sync. Turning it off saves significant memory on very large collections; verifier persistence (a launch option) is a lighter-weight alternative."
       />
       <Field label="Index build strategy">
         <select

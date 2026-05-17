@@ -20,6 +20,9 @@ executable with a MongoDB-style interface.
   events applied, index building, verification progress, latency, warnings
   and logs.
 - **Lifecycle controls** — start, pause, resume, commit and reverse.
+- **Verifier options** — turn mongosync's embedded data verifier off, or run
+  it with persistence enabled (`--enableVerifierPersistence`), to keep memory
+  use down on very large collections.
 - **Session history** — every run is recorded with its timeline (start /
   elapsed / end), outcome, and a summary of what was migrated (bytes copied,
   documents and collections verified, indexes built). Browse past runs and

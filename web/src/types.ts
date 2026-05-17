@@ -20,6 +20,7 @@ export interface MigrationConfig {
   destinationUri: string
   port: number
   version: string
+  enableVerifierPersistence: boolean
 }
 
 export type SessionMode = 'local' | 'remote'

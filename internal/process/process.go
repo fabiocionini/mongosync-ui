@@ -21,11 +21,12 @@ type Manager struct {
 // New returns an idle process Manager.
 func New() *Manager { return &Manager{} }
 
-// Start launches `mongosync --config <configPath>` with workdir as its working
-// directory (mongosync writes a metrics/ directory relative to it), redirecting
-// the process stdout/stderr to procLogPath. It returns once the process has
-// been spawned; callers should poll the mongosync API to confirm readiness.
-func (m *Manager) Start(binPath, configPath, procLogPath, workdir string) error {
+// Start launches `mongosync --config <configPath> [extraArgs…]` with workdir as
+// its working directory (mongosync writes a metrics/ directory relative to it),
+// redirecting the process stdout/stderr to procLogPath. It returns once the
+// process has been spawned; callers should poll the mongosync API to confirm
+// readiness.
+func (m *Manager) Start(binPath, configPath, procLogPath, workdir string, extraArgs []string) error {
 	m.mu.Lock()
 	if m.running {
 		m.mu.Unlock()
@@ -38,7 +39,8 @@ func (m *Manager) Start(binPath, configPath, procLogPath, workdir string) error 
 		return err
 	}
 
-	cmd := exec.Command(binPath, "--config", configPath)
+	args := append([]string{"--config", configPath}, extraArgs...)
+	cmd := exec.Command(binPath, args...)
 	cmd.Dir = workdir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile

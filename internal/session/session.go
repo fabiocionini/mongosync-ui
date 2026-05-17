@@ -46,6 +46,10 @@ type MigrationConfig struct {
 	DestinationURI string `json:"destinationUri"`
 	Port           int    `json:"port"`
 	Version        string `json:"version"`
+	// EnableVerifierPersistence passes mongosync's undocumented
+	// --enableVerifierPersistence flag, which keeps the data verifier's state
+	// out of RAM — useful for very large collections.
+	EnableVerifierPersistence bool `json:"enableVerifierPersistence"`
 }
 
 // Record is one migration session — current or historical.
@@ -312,7 +316,12 @@ func (s *Session) StartLocal(cfg MigrationConfig) (Record, error) {
 	s.activeID = id
 	s.persistLocked()
 
-	if err := s.proc.Start(s.bin.BinaryPath(), s.configPath(id), s.procLogPath(id), dir); err != nil {
+	var extraArgs []string
+	if cfg.EnableVerifierPersistence {
+		extraArgs = append(extraArgs, "--enableVerifierPersistence")
+	}
+
+	if err := s.proc.Start(s.bin.BinaryPath(), s.configPath(id), s.procLogPath(id), dir, extraArgs); err != nil {
 		rec.Outcome = "failed to launch mongosync: " + err.Error()
 		finalize(rec, StatusFailed)
 		s.activeID = ""

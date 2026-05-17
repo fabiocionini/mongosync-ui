@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { BinaryStatus } from '../types'
-import { Badge, Banner, Button, Card, Field, ProgressBar } from './ui'
+import { Badge, Banner, Button, Card, Checkbox, Field, ProgressBar } from './ui'
 
 export function SetupView({
   binary,
@@ -199,6 +199,7 @@ function LocalSetup({
   const [sourceUri, setSourceUri] = useState('')
   const [destinationUri, setDestinationUri] = useState('')
   const [port, setPort] = useState(27182)
+  const [verifierPersistence, setVerifierPersistence] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [err, setErr] = useState('')
 
@@ -213,6 +214,7 @@ function LocalSetup({
         destinationUri: destinationUri.trim(),
         port,
         version: binary.version ?? '',
+        enableVerifierPersistence: verifierPersistence,
       })
       onStarted()
     } catch (e: any) {
@@ -265,6 +267,14 @@ function LocalSetup({
             style={{ maxWidth: 160 }}
           />
         </Field>
+
+        <div className="section-label">Data verifier</div>
+        <Checkbox
+          checked={verifierPersistence}
+          onChange={setVerifierPersistence}
+          title="Enable verifier persistence"
+          description="Persists the data verifier's state instead of holding it all in RAM — much lighter on memory for large collections. Sets mongosync's --enableVerifierPersistence flag (undocumented). The verifier can also be turned off entirely from the start options."
+        />
 
         {err && (
           <div style={{ marginBottom: 12 }}>
