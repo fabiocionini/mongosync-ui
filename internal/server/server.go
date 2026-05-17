@@ -18,14 +18,15 @@ import (
 
 // Server wires HTTP handlers to the session and binary managers.
 type Server struct {
-	sess *session.Session
-	bin  *binary.Manager
-	web  fs.FS
+	sess    *session.Session
+	bin     *binary.Manager
+	web     fs.FS
+	version string
 }
 
 // New constructs a Server.
-func New(sess *session.Session, bin *binary.Manager, web fs.FS) *Server {
-	return &Server{sess: sess, bin: bin, web: web}
+func New(sess *session.Session, bin *binary.Manager, web fs.FS, version string) *Server {
+	return &Server{sess: sess, bin: bin, web: web, version: version}
 }
 
 // Handler returns the root HTTP handler with all routes registered.

@@ -101,6 +101,15 @@ a {
   font-weight: 400;
 }
 
+.topbar .brand-version {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--green-light1);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+
 .topbar .spacer {
   flex: 1;
 }

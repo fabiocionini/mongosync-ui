@@ -1,5 +1,8 @@
 # mongosync-ui
 
+[![Latest release](https://img.shields.io/github/v/release/fabiocionini/mongosync-ui?sort=semver)](https://github.com/fabiocionini/mongosync-ui/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/fabiocionini/mongosync-ui)](LICENSE)
+
 A self-contained web UI for configuring, running, monitoring and committing
 MongoDB cluster-to-cluster migrations with
 [mongosync](https://www.mongodb.com/docs/cluster-to-cluster-sync/).
@@ -31,7 +34,9 @@ executable with a MongoDB-style interface.
 
 ## Quick start
 
-Download the binary for your platform and run it:
+Download the latest release for your platform from the
+[Releases page](https://github.com/fabiocionini/mongosync-ui/releases/latest),
+then run it:
 
 ```bash
 ./mongosync-ui
@@ -162,3 +167,8 @@ MongoDB's own licensing terms.
 ## License
 
 Released under the [MIT License](LICENSE).
+
+## Author
+
+**Fabio Cionini** — [info@fabiocionini.it](mailto:info@fabiocionini.it) ·
+[github.com/fabiocionini](https://github.com/fabiocionini)

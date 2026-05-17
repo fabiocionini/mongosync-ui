@@ -69,6 +69,7 @@ export interface ActiveView {
 export interface SessionResponse {
   active: ActiveView | null
   binary: BinaryStatus
+  version: string
 }
 
 export interface VerificationPhase {

@@ -82,6 +82,9 @@ export default function App() {
           <span>
             mongosync <span className="sub">UI</span>
           </span>
+          {session?.version && (
+            <span className="brand-version">{session.version}</span>
+          )}
         </div>
         <div className="spacer" />
         {session &&

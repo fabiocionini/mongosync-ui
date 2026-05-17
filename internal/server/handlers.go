@@ -95,12 +95,13 @@ type activeView struct {
 
 // sessionResponse is returned by GET /api/session.
 type sessionResponse struct {
-	Active *activeView   `json:"active"`
-	Binary binary.Status `json:"binary"`
+	Active  *activeView   `json:"active"`
+	Binary  binary.Status `json:"binary"`
+	Version string        `json:"version"`
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
-	resp := sessionResponse{Binary: s.bin.Status()}
+	resp := sessionResponse{Binary: s.bin.Status(), Version: s.version}
 	if rec, ok := s.sess.Active(); ok {
 		av := &activeView{Record: rec}
 		if rec.Mode == session.ModeLocal {

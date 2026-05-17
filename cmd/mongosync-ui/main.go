@@ -55,7 +55,7 @@ func main() {
 		log.Fatalf("load embedded web assets: %v", err)
 	}
 
-	srv := server.New(sess, bin, webFS)
+	srv := server.New(sess, bin, webFS, version)
 	addr := fmt.Sprintf(":%d", port)
 	url := fmt.Sprintf("http://localhost:%d", port)
 
