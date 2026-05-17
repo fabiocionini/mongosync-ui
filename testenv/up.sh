@@ -10,6 +10,13 @@ DEST_PORT=27118
 DB_USER=mongosync
 DB_PASS=mongosync
 
+# Sample-data volume — override these to build large collections for testing
+# (e.g. to exercise the verifier under memory pressure):
+#   SEED_USERS=2000000 SEED_PAD_BYTES=512 ./up.sh   # ~1.2 GB in sample.users
+SEED_USERS="${SEED_USERS:-20000}"      # document count in sample.users
+SEED_ORDERS="${SEED_ORDERS:-8000}"     # document count in sample.orders
+SEED_PAD_BYTES="${SEED_PAD_BYTES:-0}"  # filler bytes added to each user doc
+
 # Refuse to start if the ports are already taken — a collision would silently
 # route mongosync to the wrong MongoDB server.
 for p in "$SOURCE_PORT" "$DEST_PORT"; do
@@ -102,25 +109,43 @@ create_user='
 msh msui-mongo-source "$SOURCE_PORT" "$create_user"
 msh msui-mongo-dest "$DEST_PORT" "$create_user"
 
-echo "==> Seeding sample data into the source cluster"
+echo "==> Seeding the source cluster (users=${SEED_USERS}, orders=${SEED_ORDERS}, pad=${SEED_PAD_BYTES}B)"
 msh msui-mongo-source "$SOURCE_PORT" '
+  const userCount  = '"$SEED_USERS"';
+  const orderCount = '"$SEED_ORDERS"';
+  const padBytes   = '"$SEED_PAD_BYTES"';
+  const pad        = padBytes > 0 ? "x".repeat(padBytes) : "";
   const sample = db.getSiblingDB("sample");
-  if (sample.users.estimatedDocumentCount() === 0) {
-    const users = [];
-    for (let i = 0; i < 20000; i++) {
-      users.push({_id:i, name:"user"+i, email:"user"+i+"@example.com",
-                  score:Math.random(), createdAt:new Date()});
+
+  // seed inserts `total` documents into coll in batches, skipping a
+  // collection that already holds data.
+  function seed(coll, total, makeDoc) {
+    if (coll.estimatedDocumentCount() > 0) {
+      print("    " + coll.getName() + ": " + coll.estimatedDocumentCount() +
+            " docs (already present)");
+      return;
     }
-    sample.users.insertMany(users);
-    const orders = [];
-    for (let i = 0; i < 8000; i++) {
-      orders.push({_id:i, userId:i % 20000, total:(i*1.37).toFixed(2),
-                   status:["open","shipped","closed"][i % 3]});
+    let batch = [];
+    for (let i = 0; i < total; i++) {
+      batch.push(makeDoc(i));
+      if (batch.length === 5000) { coll.insertMany(batch); batch = []; }
+      if (i > 0 && i % 100000 === 0) {
+        print("      " + coll.getName() + ": " + i + " / " + total);
+      }
     }
-    sample.orders.insertMany(orders);
+    if (batch.length) coll.insertMany(batch);
+    print("    " + coll.getName() + ": " + coll.estimatedDocumentCount() + " docs");
   }
-  print("    sample.users:  " + sample.users.estimatedDocumentCount());
-  print("    sample.orders: " + sample.orders.estimatedDocumentCount());' --auth
+
+  seed(sample.users, userCount, i => ({
+    _id: i, name: "user" + i, email: "user" + i + "@example.com",
+    score: Math.random(), createdAt: new Date(), pad: pad,
+  }));
+  seed(sample.orders, orderCount, i => ({
+    _id: i, userId: userCount > 0 ? i % userCount : 0,
+    total: (i * 1.37).toFixed(2), status: ["open", "shipped", "closed"][i % 3],
+  }));
+' --auth
 
 SRC_URI="mongodb://${DB_USER}:${DB_PASS}@localhost:${SOURCE_PORT}/?replicaSet=rs-source&authSource=admin"
 DST_URI="mongodb://${DB_USER}:${DB_PASS}@localhost:${DEST_PORT}/?replicaSet=rs-dest&authSource=admin"
@@ -136,7 +161,9 @@ cat <<EOF
     ${DST_URI}
 
 Paste those into mongosync-ui's "Run locally" setup. The destination starts
-empty; the source holds ~28k documents in the "sample" database.
+empty; the source holds ${SEED_USERS} users + ${SEED_ORDERS} orders in the
+"sample" database.
 
-Tear down with:  ./down.sh
+Build bigger collections with:  SEED_USERS=2000000 SEED_PAD_BYTES=512 ./up.sh
+Tear down with:                 ./down.sh
 EOF

@@ -89,6 +89,14 @@ Recreate the environment (`down.sh && up.sh`) before each test run —
 mongosync cannot start a fresh sync onto clusters that already hold a
 finished one.
 
+The seeded data volume is configurable — set `SEED_USERS`, `SEED_ORDERS`
+and `SEED_PAD_BYTES` to build large collections, for example to exercise
+the verifier under memory pressure:
+
+```bash
+SEED_USERS=2000000 SEED_PAD_BYTES=512 ./up.sh   # ~1.2 GB in sample.users
+```
+
 ## Building from source
 
 Requires **Go 1.26+** and **Node.js 20+**.
