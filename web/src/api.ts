@@ -65,6 +65,8 @@ export const api = {
       'GET',
       `/api/sessions/${encodeURIComponent(id)}/logs`,
     ),
+  deleteSession: (id: string) =>
+    request<void>('DELETE', `/api/sessions/${encodeURIComponent(id)}`),
 
   // binary management
   binaryStatus: () => request<BinaryStatus>('GET', '/api/binary/status'),

@@ -248,6 +248,32 @@ func (s *Session) Record(id string) (Record, bool) {
 	return Record{}, false
 }
 
+// DeleteRecord removes a finished session from the registry and deletes its
+// on-disk directory. The active session cannot be deleted.
+func (s *Session) DeleteRecord(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconcileLocked()
+
+	if id == s.activeID {
+		return fmt.Errorf("cannot delete the active session; stop it first")
+	}
+	idx := -1
+	for i, r := range s.records {
+		if r.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("session not found")
+	}
+	s.records = append(s.records[:idx], s.records[idx+1:]...)
+	s.persistLocked()
+	_ = os.RemoveAll(s.sessionDir(id))
+	return nil
+}
+
 // Active returns the currently active session, if any.
 func (s *Session) Active() (Record, bool) {
 	s.mu.Lock()

@@ -177,3 +177,49 @@ export function Metric({
 export function Spinner({ light }: { light?: boolean }) {
   return <span className={`spinner ${light ? 'light' : ''}`} />
 }
+
+export function ConfirmDialog({
+  title,
+  message,
+  confirmLabel = 'Confirm',
+  danger,
+  busy,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  title: string
+  message: ReactNode
+  confirmLabel?: string
+  danger?: boolean
+  busy?: boolean
+  error?: string
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="modal-overlay" onClick={busy ? undefined : onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>{title}</h2>
+        <p>{message}</p>
+        {error && (
+          <div style={{ marginBottom: 16 }}>
+            <Banner variant="danger">{error}</Banner>
+          </div>
+        )}
+        <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
+          <Button onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            variant={danger ? 'danger' : 'primary'}
+            onClick={onConfirm}
+            loading={busy}
+          >
+            {confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}

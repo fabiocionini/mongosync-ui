@@ -117,6 +117,7 @@ export default function App() {
             active={active}
             onNew={() => setView({ name: 'setup' })}
             onOpen={openRecord}
+            onChanged={refresh}
           />
         )}
 

@@ -1,5 +1,7 @@
 // SessionsView is the home screen: a browsable list of every migration run.
 
+import { useState } from 'react'
+import { api } from '../api'
 import {
   elapsedSeconds,
   formatDateTime,
@@ -7,19 +9,40 @@ import {
   sessionStatusColor,
 } from '../format'
 import type { ActiveView, SessionRecord } from '../types'
-import { Badge, Button, Card } from './ui'
+import { Badge, Button, Card, ConfirmDialog } from './ui'
 
 export function SessionsView({
   records,
   active,
   onNew,
   onOpen,
+  onChanged,
 }: {
   records: SessionRecord[]
   active: ActiveView | null
   onNew: () => void
   onOpen: (rec: SessionRecord) => void
+  onChanged: () => void
 }) {
+  const [toDelete, setToDelete] = useState<SessionRecord | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+
+  async function confirmDelete() {
+    if (!toDelete) return
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      await api.deleteSession(toDelete.id)
+      setToDelete(null)
+      onChanged()
+    } catch (e: any) {
+      setDeleteError(String(e.message || e))
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div>
       <div
@@ -62,10 +85,34 @@ export function SessionsView({
           </Card>
         ) : (
           records.map((rec) => (
-            <SessionRow key={rec.id} rec={rec} onOpen={() => onOpen(rec)} />
+            <SessionRow
+              key={rec.id}
+              rec={rec}
+              onOpen={() => onOpen(rec)}
+              onDelete={() => {
+                setDeleteError('')
+                setToDelete(rec)
+              }}
+            />
           ))
         )}
       </div>
+
+      {toDelete && (
+        <ConfirmDialog
+          title="Delete session"
+          danger
+          confirmLabel="Delete"
+          busy={deleting}
+          error={deleteError}
+          message="Permanently delete this migration session? Its history record, logs and configuration files are removed. This cannot be undone."
+          onConfirm={confirmDelete}
+          onCancel={() => {
+            setToDelete(null)
+            setDeleteError('')
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -73,9 +120,11 @@ export function SessionsView({
 function SessionRow({
   rec,
   onOpen,
+  onDelete,
 }: {
   rec: SessionRecord
   onOpen: () => void
+  onDelete: () => void
 }) {
   const isActive = rec.status === 'active'
   const elapsed = elapsedSeconds(rec.startedAt, rec.endedAt)
@@ -105,14 +154,29 @@ function SessionRow({
           <div className="session-row-outcome">{rec.outcome}</div>
         )}
       </div>
-      <div className="session-row-times">
-        <div>
-          <span className="muted">started</span> {formatDateTime(rec.startedAt)}
+      <div className="session-row-side">
+        <div className="session-row-times">
+          <div>
+            <span className="muted">started</span>{' '}
+            {formatDateTime(rec.startedAt)}
+          </div>
+          <div>
+            <span className="muted">{isActive ? 'running' : 'ran'}</span>{' '}
+            {formatDuration(elapsed)}
+          </div>
         </div>
-        <div>
-          <span className="muted">{isActive ? 'running' : 'ran'}</span>{' '}
-          {formatDuration(elapsed)}
-        </div>
+        {!isActive && (
+          <Button
+            small
+            variant="danger"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete()
+            }}
+          >
+            Delete
+          </Button>
+        )}
       </div>
     </div>
   )
