@@ -102,6 +102,16 @@ the verifier under memory pressure:
 SEED_USERS=2000000 SEED_PAD_BYTES=512 ./up.sh   # ~1.2 GB in sample.users
 ```
 
+To exercise the **Attach to remote** flow, run a standalone mongosync
+against these clusters:
+
+```bash
+./run-mongosync.sh    # exposes the mongosync API on http://localhost:27182
+```
+
+Then in mongosync-ui choose *New migration → Attach to remote* and enter
+`http://localhost:27182`.
+
 ## Building from source
 
 Requires **Go 1.26+** and **Node.js 20+**.

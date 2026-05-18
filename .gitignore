@@ -21,5 +21,8 @@ mongosync-ui-data/
 # Test environment replica-set keyfile (generated, secret)
 testenv/.keyfile
 
+# Standalone mongosync logs from testenv/run-mongosync.sh
+testenv/standalone-logs/
+
 # mongosync runtime metrics output
 metrics/
