@@ -32,6 +32,16 @@ executable with a MongoDB-style interface.
   open any one for full details.
 - **Single binary** — the React UI is embedded; nothing else to deploy.
 
+## Screenshots
+
+**Live migration monitor** — progress, metrics, verification and controls.
+
+<img src="docs/screenshots/monitor.png" alt="Live migration monitor" width="820">
+
+**Session history** — every run with its timeline and outcome.
+
+<img src="docs/screenshots/sessions.png" alt="Migration sessions list" width="820">
+
 ## Quick start
 
 Download the latest release for your platform from the
