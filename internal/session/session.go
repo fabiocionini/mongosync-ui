@@ -71,6 +71,9 @@ type Record struct {
 	// reversible option. nil means unknown (e.g. an attached remote session
 	// the UI did not start).
 	Reversible *bool `json:"reversible,omitempty"`
+	// AnalyzedDataSize is the source data size from the most recent
+	// pre-migration analysis, used as a stable progress-bar denominator.
+	AnalyzedDataSize int64 `json:"analyzedDataSize,omitempty"`
 }
 
 // Summary is a snapshot of a migration's measurable progress. Each field holds
@@ -302,6 +305,20 @@ func (s *Session) Client() *client.Client {
 	return nil
 }
 
+// SourceURI returns the source connection string of the active session, read
+// back from its generated config. It is empty for remote sessions (the UI
+// never holds their connection strings) and when no session is active.
+func (s *Session) SourceURI() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconcileLocked()
+	r := s.recordLocked(s.activeID)
+	if r == nil || r.Mode != ModeLocal {
+		return ""
+	}
+	return readConfigValue(s.configPath(r.ID), "cluster0")
+}
+
 // StartLocal writes a mongosync config, launches the binary, waits for its API
 // and records the session.
 func (s *Session) StartLocal(cfg MigrationConfig) (Record, error) {
@@ -509,6 +526,19 @@ func (s *Session) SetReversible(reversible bool) {
 	s.persistLocked()
 }
 
+// SetAnalyzedDataSize records the source data size measured by the most
+// recent pre-migration analysis on the active session.
+func (s *Session) SetAnalyzedDataSize(bytes int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.recordLocked(s.activeID)
+	if r == nil {
+		return
+	}
+	r.AnalyzedDataSize = bytes
+	s.persistLocked()
+}
+
 // InitializingHint explains the active session's INITIALIZING state from its
 // log. It returns a message and whether the situation indicates a problem.
 func (s *Session) InitializingHint() (string, bool) {
@@ -576,4 +606,27 @@ func yamlString(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
 	return `"` + s + `"`
+}
+
+// readConfigValue reads back a double-quoted scalar written by writeConfigYAML.
+func readConfigValue(path, key string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	prefix := key + ": "
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		v := strings.TrimPrefix(line, prefix)
+		if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+			v = v[1 : len(v)-1]
+			v = strings.ReplaceAll(v, `\"`, `"`)
+			v = strings.ReplaceAll(v, `\\`, `\`)
+		}
+		return v
+	}
+	return ""
 }

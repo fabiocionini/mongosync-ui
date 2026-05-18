@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+// progressTimeout caps the polling call so the UI stays responsive. The
+// lifecycle actions (start, pause, resume, commit, reverse) get NO client
+// deadline — a commit in particular can legitimately run for a long time, so
+// the call waits as long as it takes, bounded only by the caller's context.
+const progressTimeout = 15 * time.Second
+
 // Client talks to a single mongosync instance, identified by its API base URL
 // (for example http://localhost:27182).
 type Client struct {
@@ -23,7 +29,7 @@ type Client struct {
 func New(baseURL string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
-		http:    &http.Client{Timeout: 30 * time.Second},
+		http:    &http.Client{}, // per-call deadlines are applied in call
 	}
 }
 
@@ -33,7 +39,13 @@ type Response struct {
 	Status int
 }
 
-func (c *Client) call(ctx context.Context, method, path string, body any) (*Response, error) {
+func (c *Client) call(ctx context.Context, method, path string, body any, timeout time.Duration) (*Response, error) {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
 	var reader io.Reader
 	switch {
 	case body != nil:
@@ -66,32 +78,32 @@ func (c *Client) call(ctx context.Context, method, path string, body any) (*Resp
 
 // Progress returns the current synchronization status.
 func (c *Client) Progress(ctx context.Context) (*Response, error) {
-	return c.call(ctx, http.MethodGet, "/api/v1/progress", nil)
+	return c.call(ctx, http.MethodGet, "/api/v1/progress", nil, progressTimeout)
 }
 
 // Start begins a synchronization session with the supplied options body.
 func (c *Client) Start(ctx context.Context, body any) (*Response, error) {
-	return c.call(ctx, http.MethodPost, "/api/v1/start", body)
+	return c.call(ctx, http.MethodPost, "/api/v1/start", body, 0)
 }
 
 // Pause pauses the running session.
 func (c *Client) Pause(ctx context.Context) (*Response, error) {
-	return c.call(ctx, http.MethodPost, "/api/v1/pause", nil)
+	return c.call(ctx, http.MethodPost, "/api/v1/pause", nil, 0)
 }
 
 // Resume resumes a paused session.
 func (c *Client) Resume(ctx context.Context) (*Response, error) {
-	return c.call(ctx, http.MethodPost, "/api/v1/resume", nil)
+	return c.call(ctx, http.MethodPost, "/api/v1/resume", nil, 0)
 }
 
 // Commit finalizes the synchronization session.
 func (c *Client) Commit(ctx context.Context) (*Response, error) {
-	return c.call(ctx, http.MethodPost, "/api/v1/commit", nil)
+	return c.call(ctx, http.MethodPost, "/api/v1/commit", nil, 0)
 }
 
 // Reverse reverses the direction of a committed session.
 func (c *Client) Reverse(ctx context.Context) (*Response, error) {
-	return c.call(ctx, http.MethodPost, "/api/v1/reverse", nil)
+	return c.call(ctx, http.MethodPost, "/api/v1/reverse", nil, 0)
 }
 
 // Ping verifies the mongosync API is reachable.

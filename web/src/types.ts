@@ -56,6 +56,7 @@ export interface SessionRecord {
   outcome?: string
   summary?: SessionSummary
   reversible?: boolean
+  analyzedDataSize?: number
 }
 
 // ActiveView is the active session enriched with live detail.
@@ -135,4 +136,23 @@ export interface StartOptions {
 export interface LogsResponse {
   available: boolean
   lines: string[]
+}
+
+export interface DatabaseStats {
+  name: string
+  dataSize: number
+  storageSize: number
+  documents: number
+  collections: number
+  indexes: number
+}
+
+// AnalyzeResult is the aggregate size of a cluster's user databases.
+export interface AnalyzeResult {
+  databases: DatabaseStats[]
+  dataSize: number
+  storageSize: number
+  documents: number
+  collections: number
+  indexes: number
 }

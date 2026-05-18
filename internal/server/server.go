@@ -37,6 +37,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/binary/versions", s.handleBinaryVersions)
 	mux.HandleFunc("POST /api/binary/install", s.handleBinaryInstall)
 
+	mux.HandleFunc("POST /api/analyze", s.handleAnalyze)
+
 	mux.HandleFunc("GET /api/sessions", s.handleSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleSessionByID)
 	mux.HandleFunc("GET /api/sessions/{id}/logs", s.handleSessionLogs)

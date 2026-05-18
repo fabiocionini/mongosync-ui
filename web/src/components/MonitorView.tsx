@@ -13,6 +13,7 @@ import {
 } from '../format'
 import type {
   ActiveView,
+  AnalyzeResult,
   Namespace,
   Progress,
   ProgressResponse,
@@ -35,13 +36,22 @@ export function MonitorView({
   const [actionError, setActionError] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
 
+  // mongosync serializes its control API, so an occasional /progress poll can
+  // block past its timeout while mongosync is busy checkpointing. Treat that as
+  // transient: keep the last-known state and only surface the banner once a few
+  // polls in a row have failed (~6s of genuine unreachability).
+  const pollFails = useRef(0)
   const poll = useCallback(async () => {
     try {
       const r = await api.progress()
       setResp(r)
+      pollFails.current = 0
       setPollError('')
     } catch (e: any) {
-      setPollError(String(e.message || e))
+      pollFails.current += 1
+      if (pollFails.current >= 3) {
+        setPollError(String(e.message || e))
+      }
     }
   }, [])
 
@@ -147,7 +157,7 @@ export function MonitorView({
       </div>
 
       <div className="stack" style={{ marginTop: 24 }}>
-        {pollError && (
+        {pollError && busy === null && (
           <Banner variant="danger">
             Cannot reach mongosync: {pollError}
           </Banner>
@@ -193,6 +203,7 @@ export function MonitorView({
           canCommit={!!progress?.canCommit}
           commitNote={commitNote}
           reversible={active.record.reversible}
+          canAnalyze={active.record.mode === 'local'}
           busy={busy}
           onStart={(opts) => runAction('Start', () => api.start(opts))}
           onPause={() => runAction('Pause', api.pause)}
@@ -201,7 +212,12 @@ export function MonitorView({
           onReverse={() => runAction('Reverse', api.reverse)}
         />
 
-        {progress && <ProgressSection progress={progress} />}
+        {progress && (
+          <ProgressSection
+            progress={progress}
+            analyzedTotal={active.record.analyzedDataSize}
+          />
+        )}
         {progress?.indexBuilding && <IndexBuildingCard progress={progress} />}
         {progress && <DirectionCard progress={progress} />}
         {progress?.verification && <VerificationCard progress={progress} />}
@@ -233,6 +249,7 @@ function ActionBar({
   canCommit,
   commitNote,
   reversible,
+  canAnalyze,
   busy,
   onStart,
   onPause,
@@ -244,6 +261,7 @@ function ActionBar({
   canCommit: boolean
   commitNote: string
   reversible?: boolean
+  canAnalyze: boolean
   busy: string | null
   onStart: (opts: StartOptions) => void
   onPause: () => void
@@ -322,6 +340,7 @@ function ActionBar({
       {isIdle && showStart && (
         <StartPanel
           busy={busy === 'Start'}
+          canAnalyze={canAnalyze}
           onStart={(opts) => {
             onStart(opts)
             setShowStart(false)
@@ -334,18 +353,25 @@ function ActionBar({
 
 function StartPanel({
   busy,
+  canAnalyze,
   onStart,
 }: {
   busy: boolean
+  canAnalyze: boolean
   onStart: (opts: StartOptions) => void
 }) {
   const [reversible, setReversible] = useState(false)
   const [verification, setVerification] = useState(true)
   const [buildIndexes, setBuildIndexes] = useState('afterDataCopy')
   const [namespaces, setNamespaces] = useState<{ db: string; cols: string }[]>([])
+  const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analyzeErr, setAnalyzeErr] = useState('')
 
-  function buildOptions(): StartOptions {
-    const includeNamespaces: Namespace[] = namespaces
+  // buildNamespaces turns the editor rows into the include-namespace list,
+  // shared by the start request and the data-size analysis.
+  function buildNamespaces(): Namespace[] {
+    return namespaces
       .filter((n) => n.db.trim())
       .map((n) => {
         const cols = n.cols
@@ -356,6 +382,10 @@ function StartPanel({
           ? { database: n.db.trim(), collections: cols }
           : { database: n.db.trim() }
       })
+  }
+
+  function buildOptions(): StartOptions {
+    const includeNamespaces = buildNamespaces()
     const opts: StartOptions = {
       reversible,
       buildIndexes,
@@ -364,6 +394,26 @@ function StartPanel({
     if (includeNamespaces.length > 0) opts.includeNamespaces = includeNamespaces
     return opts
   }
+
+  async function analyze() {
+    setAnalyzing(true)
+    setAnalyzeErr('')
+    try {
+      setAnalysis(await api.analyze(buildNamespaces()))
+    } catch (e: any) {
+      setAnalyzeErr(String(e.message || e))
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
+  // Re-measure the data to be migrated on open and whenever the whitelist
+  // changes, debounced so editing the rows does not hammer the source.
+  useEffect(() => {
+    if (!canAnalyze) return
+    const t = setTimeout(analyze, 800)
+    return () => clearTimeout(t)
+  }, [namespaces, canAnalyze])
 
   return (
     <div className="inline-form">
@@ -434,7 +484,27 @@ function StartPanel({
         + Add namespace
       </Button>
 
-      <div style={{ marginTop: 16 }}>
+      {canAnalyze && (
+        <div style={{ marginTop: 18 }}>
+          <div className="section-label">Data to migrate</div>
+          {analyzing && (
+            <p
+              className="hint"
+              style={{ display: 'flex', gap: 8, alignItems: 'center' }}
+            >
+              <Spinner /> Measuring source data size…
+            </p>
+          )}
+          {!analyzing && analyzeErr && (
+            <Banner variant="danger">{analyzeErr}</Banner>
+          )}
+          {!analyzing && !analyzeErr && analysis && (
+            <AnalysisResult result={analysis} />
+          )}
+        </div>
+      )}
+
+      <div style={{ marginTop: 18 }}>
         <Button
           variant="primary"
           onClick={() => onStart(buildOptions())}
@@ -442,6 +512,43 @@ function StartPanel({
         >
           Start migration now
         </Button>
+      </div>
+    </div>
+  )
+}
+
+function AnalysisResult({ result }: { result: AnalyzeResult }) {
+  if (result.databases.length === 0) {
+    return (
+      <p className="hint" style={{ marginTop: 10 }}>
+        No data found for the selected namespaces.
+      </p>
+    )
+  }
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="metrics">
+        <Metric label="Data size" value={formatBytes(result.dataSize)} small />
+        <Metric
+          label="Documents"
+          value={formatNumber(result.documents)}
+          small
+        />
+        <Metric
+          label="Collections"
+          value={formatNumber(result.collections)}
+          small
+        />
+      </div>
+      <div style={{ marginTop: 12 }}>
+        {result.databases.map((d, i) => (
+          <div className="kv" key={d.name + i}>
+            <span className="k mono">{d.name}</span>
+            <span className="v">
+              {formatBytes(d.dataSize)} · {formatNumber(d.documents)} docs
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -460,10 +567,21 @@ function sourceWritesBlocked(progress: Progress): boolean {
   return (progress.info || '').toLowerCase().includes('waiting for commit')
 }
 
-function ProgressSection({ progress }: { progress: Progress }) {
+function ProgressSection({
+  progress,
+  analyzedTotal,
+}: {
+  progress: Progress
+  analyzedTotal?: number
+}) {
   const srcBlocked = sourceWritesBlocked(progress)
   const copied = progress.collectionCopy?.estimatedCopiedBytes
-  const total = progress.collectionCopy?.estimatedTotalBytes
+  // Prefer the size measured by a pre-migration analysis — a real, fixed
+  // number — over mongosync's own estimate, which fluctuates mid-run.
+  const analyzed = !!analyzedTotal && analyzedTotal > 0
+  const total = analyzed
+    ? analyzedTotal
+    : progress.collectionCopy?.estimatedTotalBytes
   const pct =
     total && total > 0 && copied !== undefined
       ? Math.min(100, (copied / total) * 100)
@@ -488,6 +606,7 @@ function ProgressSection({ progress }: { progress: Progress }) {
       <div style={{ marginTop: 6 }} className="muted">
         {inCopy ? 'Collection copy: ' : 'Copied: '}
         {formatBytes(copied)} of {formatBytes(total)}
+        {analyzed && ' (analyzed source size)'}
       </div>
 
       <div className="metrics" style={{ marginTop: 22 }}>

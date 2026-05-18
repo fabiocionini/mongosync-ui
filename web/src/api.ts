@@ -1,9 +1,11 @@
 // Typed client for the mongosync-ui backend REST API.
 
 import type {
+  AnalyzeResult,
   BinaryStatus,
   LogsResponse,
   MigrationConfig,
+  Namespace,
   ProgressResponse,
   SessionRecord,
   SessionResponse,
@@ -69,6 +71,9 @@ export const api = {
     request<void>('DELETE', `/api/sessions/${encodeURIComponent(id)}`),
 
   // binary management
+  analyze: (includeNamespaces: Namespace[]) =>
+    request<AnalyzeResult>('POST', '/api/analyze', { includeNamespaces }),
+
   binaryStatus: () => request<BinaryStatus>('GET', '/api/binary/status'),
   binaryVersions: () =>
     request<{ versions: string[] }>('GET', '/api/binary/versions'),

@@ -1,11 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
+	"github.com/fabiocionini/mongosync-ui/internal/analyzer"
 	"github.com/fabiocionini/mongosync-ui/internal/binary"
 	"github.com/fabiocionini/mongosync-ui/internal/client"
 	"github.com/fabiocionini/mongosync-ui/internal/session"
@@ -45,6 +48,36 @@ func (s *Server) handleBinaryInstall(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	s.bin.Install(body.Version)
 	writeJSON(w, http.StatusAccepted, s.bin.Status())
+}
+
+// --- cluster analysis -----------------------------------------------------
+
+// handleAnalyze reports how much data the active session's source cluster
+// holds — optionally limited to a whitelist of namespaces — so a migration
+// can be sized before it is started.
+func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IncludeNamespaces []analyzer.Namespace `json:"includeNamespaces"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	uri := s.sess.SourceURI()
+	if uri == "" {
+		writeError(w, http.StatusConflict,
+			"data-size analysis is available only for a locally-launched migration")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	result, err := analyzer.Analyze(ctx, uri, body.IncludeNamespaces)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	// Record the measured size so the progress bar can use it as a stable,
+	// accurate denominator instead of mongosync's own estimate.
+	s.sess.SetAnalyzedDataSize(result.DataSize)
+	writeJSON(w, http.StatusOK, result)
 }
 
 // --- sessions registry ----------------------------------------------------
