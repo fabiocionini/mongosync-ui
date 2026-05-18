@@ -61,6 +61,16 @@ export default function App() {
     }
   }, [view, active, loaded, session])
 
+  // A monitor view whose session has ended resolves to that session's details
+  // (or the list) — computed during render so the UI never shows a blank
+  // frame, regardless of when the routing effect above runs.
+  const resolved: View =
+    view.name === 'monitor' && !active
+      ? monitoredId.current
+        ? { name: 'details', id: monitoredId.current }
+        : { name: 'sessions' }
+      : view
+
   function openRecord(rec: SessionRecord) {
     if (rec.status === 'active') {
       monitoredId.current = rec.id
@@ -114,7 +124,7 @@ export default function App() {
           </Banner>
         )}
 
-        {loaded && session && view.name === 'sessions' && (
+        {loaded && session && resolved.name === 'sessions' && (
           <SessionsView
             records={records}
             active={active}
@@ -124,7 +134,7 @@ export default function App() {
           />
         )}
 
-        {loaded && session && view.name === 'setup' && (
+        {loaded && session && resolved.name === 'setup' && (
           <SetupView
             binary={session.binary}
             hasActive={!!active}
@@ -137,7 +147,7 @@ export default function App() {
           />
         )}
 
-        {loaded && session && view.name === 'monitor' && active && (
+        {loaded && session && resolved.name === 'monitor' && active && (
           <MonitorView
             active={active}
             onChanged={refresh}
@@ -145,9 +155,9 @@ export default function App() {
           />
         )}
 
-        {loaded && view.name === 'details' && (
+        {loaded && resolved.name === 'details' && (
           <SessionDetailsView
-            id={view.id}
+            id={resolved.id}
             onBack={() => setView({ name: 'sessions' })}
           />
         )}
