@@ -22,6 +22,12 @@ executable with a MongoDB-style interface.
 - **Live monitor** — synchronization state, collection-copy progress, lag,
   events applied, index building, verification progress, latency, warnings
   and logs.
+- **Pre-migration data-size analysis** — before you start, mongosync-ui
+  queries the source cluster directly (`dbStats` / `collStats`) and shows
+  exactly how much data the run will move, automatically re-measuring as
+  you edit the include-namespace whitelist. The measured size also becomes
+  the progress bar's denominator, replacing mongosync's own unreliable
+  pre-start estimate.
 - **Lifecycle controls** — start, pause, resume, commit and reverse.
 - **Verifier options** — turn mongosync's embedded data verifier off, or run
   it with persistence enabled (`--enableVerifierPersistence`), to keep memory
@@ -153,14 +159,16 @@ cmd/mongosync-ui      entrypoint and flags
 internal/binary       downloads/verifies/extracts the mongosync binary
 internal/process      supervises the local mongosync child process
 internal/client       wraps the mongosync HTTP control API
+internal/analyzer     measures source-cluster data size via the MongoDB driver
 internal/session      session registry: records, history and per-run state
 internal/server       REST API + serves the embedded SPA
 web/                  React + TypeScript UI (Vite), embedded via go:embed
 ```
 
 The Go server exposes a REST API (`/api/...`) that the SPA consumes:
-`/api/sessions` lists the history, `/api/session` is the active session, and
-for an active session the server proxies the mongosync HTTP API at
+`/api/sessions` lists the history, `/api/session` is the active session,
+`/api/analyze` reports the source cluster's data size, and for an active
+session the server proxies the mongosync HTTP API at
 `/api/v1/{progress,start,pause,resume,commit,reverse}`.
 
 The single-active-session model is built as a registry, so running multiple
